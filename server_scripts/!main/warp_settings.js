@@ -58,7 +58,7 @@ PlayerEvents.chat(event => {
   }
 
   if (!event.player.op) {
-    event.player.tell(Text.red('[Hexahedron] Only server operators can change the warp mode.'))
+    event.player.tell(Text.red(Text.translatable('cw.settings.operator_only')))
     event.cancel()
     return
   }
@@ -69,7 +69,7 @@ PlayerEvents.chat(event => {
   } else if (arg === 'teleport_inside' || arg === 'teleport' || arg === 'all_aboard' || arg === '1') {
     saveWarpConfig(event.server, 'teleport_inside')
   } else {
-    event.player.tell(Text.yellow('[Hexahedron] Usage: !warpmode [leave_behind | teleport_inside | status]'))
+    event.player.tell(Text.yellow(Text.translatable('cw.settings.usage')))
   }
   event.cancel()
 })

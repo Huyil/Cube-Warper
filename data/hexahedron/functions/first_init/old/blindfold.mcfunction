@@ -1,5 +1,5 @@
 effect give @a blindness 2 0 true
-title @a actionbar {"text":"Generating world, please hold...","bold":true,"color":"aqua"}
+title @a actionbar {"translate":"cw.effect.generating_world","bold":true,"color":"aqua"}
 tp @a 0 200.5 0
 stopsound @a
 

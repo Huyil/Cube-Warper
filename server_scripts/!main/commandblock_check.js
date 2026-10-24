@@ -10,9 +10,9 @@ function commandBlocksEnabled(server) {
 }
 
 const WARNING = [
-  Text.red('⚠ Command blocks are disabled on this server. ⚠').bold(),
-  Text.red('This will break the pack down the line, so please enable them.'),
-  Text.red('Set enable-command-block=true in server.properties.')
+  Text.red(Text.translatable('cw.warn.command_blocks_disabled')).bold(),
+  Text.red(Text.translatable('cw.warn.enable_command_blocks')),
+  Text.red(Text.translatable('cw.warn.set_command_block_property'))
 ]
 
 ServerEvents.loaded(event => {
