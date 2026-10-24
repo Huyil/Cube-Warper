@@ -1,0 +1,11 @@
+{
+    "advancement.create.rose_quartz.desc": "用砂纸将玫瑰石英打磨至透明",
+    "block.create.rose_quartz_block": "玫瑰石英块",
+    "block.create.rose_quartz_lamp": "玫瑰石英灯",
+    "block.create.rose_quartz_tiles": "玫瑰石英砖块",
+    "block.create.small_rose_quartz_tiles": "玫瑰石英小砖块",
+    "create.ponder.rose_quartz_lamp.header": "玫瑰石英灯",
+    "create.ponder.rose_quartz_lamp.text_1": "玫瑰石英灯通入红石信号后会处于激活状态",
+    "item.create.polished_rose_quartz": "磨制玫瑰石英",
+    "item.create.rose_quartz": "玫瑰石英"
+}
