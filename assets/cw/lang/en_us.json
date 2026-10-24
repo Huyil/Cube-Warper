@@ -98,6 +98,7 @@
   "cw.settings.teleport_inside_1": "TELEPORT INSIDE (1)",
   "cw.settings.teleport_inside_detail": " (all players outside are pulled into the Hexahedron when warp starts).",
   "cw.settings.usage": "[Hexahedron] Usage: !warpmode [leave_behind | teleport_inside | status]",
+  "cw.shrine.busy": "⟢ Altar busy · wait",
   "cw.ui.tooltip.add_1": "Adds 1",
   "cw.ui.tooltip.add_2": "Adds 2",
   "cw.ui.tooltip.chiller_not_consumed": "Will not be consumed when used in the Chiller",
