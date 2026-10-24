@@ -1085,7 +1085,8 @@ function c4WarpBody(server, job) {
     console.info('[C4] 槽位 ' + slot + ' 目的地 = ' + destId + ' @ ' + Math.round(outer.x) + ',' + Math.round(outer.y) + ',' + Math.round(outer.z))
 
     let n = c4Retarget(server, cur.x, cur.y, cur.z, destKey,
-      Number(outer.x), Number(outer.y), Number(outer.z), true, destId)
+      Number(outer.x), Number(outer.y), Number(outer.z), true, destId,
+      (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot))
     if (n === 0) c4TellTeam(server, slot, c4t('cw.warp.aim_fail'))
     // 目标侧造反向门（走回去用）
     try {
@@ -1531,7 +1532,7 @@ function c4CmdDoors(ctx, slot) {
   let aimed = 0
   try {
     aimed = c4Retarget(server, core.x, core.y, core.z, c4DimKey('hexahedron:bedrock_bottom'),
-      x, C4_CORE_Y, C4_Z, false, 'hexahedron:bedrock_bottom')
+      x, C4_CORE_Y, C4_Z, false, 'hexahedron:bedrock_bottom', idName)
   } catch (e2) { console.warn('[C4] doors retarget: ' + e2) }
   console.info('[C4] /cwp doors ' + slot + '：造门 ' + n + ' 扇，指向 ' + aimed + ' 扇')
   c4Reply(ctx, '槽位 ' + slot + '：造门 ' + n + ' / 指向 ' + aimed + '（内部未改动）')
