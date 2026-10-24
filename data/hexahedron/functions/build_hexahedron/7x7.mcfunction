@@ -22,7 +22,7 @@ fill ~-3 ~-3 ~-3 ~-3 ~-3 ~3 kubejs:warping_frame
 fill ~3 ~-3 ~-3 ~3 ~-3 ~3 kubejs:warping_frame
 
 # Floor
-fill ~-2 ~-3 ~-2 ~2 ~-3 ~2 kubejs:stacked_warping_frame_slab
+fill ~-2 ~-3 ~-2 ~2 ~-3 ~2 kubejs:stacked_warping_frame
 
 # Controls
 setblock ~ ~-2 ~3 kubejs:warping_controls

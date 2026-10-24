@@ -17,7 +17,7 @@ ServerEvents.tags('block', event => {
   event.add('hexahedron_frame', 'kubejs:warping_vent')
   event.add('hexahedron_frame', 'kubejs:warping_vent_rusted_half')
   event.add('hexahedron_frame', 'kubejs:warping_vent_rusted')
-  event.add('hexahedron_frame', 'kubejs:stacked_warping_frame_slab')
+  event.add('hexahedron_frame', 'kubejs:stacked_warping_frame')
   event.add('hexahedron_frame', 'kubejs:warping_interface')
   event.add('hexahedron_frame', 'kubejs:warping_controls')
   event.add('hexahedron_frame', 'kubejs:warping_disc_drive')

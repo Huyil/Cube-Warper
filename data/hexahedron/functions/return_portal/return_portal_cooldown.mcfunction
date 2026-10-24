@@ -9,7 +9,6 @@ execute as @e[type=immersive_portals:portal,name=home_portal,limit=1,sort=neares
 execute as @e[type=immersive_portals:portal,name=home_portal,limit=1,sort=nearest] at @s if score @s time matches ..0 run playsound block.respawn_anchor.deplete master @a ~ ~ ~ 1 0
 execute as @e[type=immersive_portals:portal,name=home_portal,limit=1,sort=nearest] at @s if score @s time matches ..0 run fill ~ ~ ~ ~ ~-1 ~ air replace light
 
-kill @e[type=immersive_portals:portal,name=home_portal,scores={time=..0}]
 
 execute if score @e[type=immersive_portals:portal,name=home_portal,limit=1,sort=nearest] time matches 0.. run schedule function hexahedron:return_portal/return_portal_cooldown 1s
 

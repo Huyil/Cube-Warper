@@ -13,7 +13,6 @@
 #
 #schedule function hexahedron:return_portal/return_portal_cooldown 1s
 
-execute as @a[limit=1,sort=nearest] in overworld run tp @s 0.5 99 2.5
 function hexahedron:return_portal/portal_travel
 
 execute unless entity @e[type=marker,tag=running] unless entity @e[type=marker,tag=pre_runtime] run schedule function hexahedron:fix_portals 3s
