@@ -98,6 +98,7 @@
   "cw.settings.teleport_inside_1": "传送进内部 (1)",
   "cw.settings.teleport_inside_detail": " (跃迁开始时,所有在外部的玩家都会被拉进六面体).",
   "cw.settings.usage": "[六面体] 用法: !warpmode [leave_behind | teleport_inside | status]",
+  "cw.shrine.busy": "⟢ 祭坛运转中 · 请稍候",
   "cw.ui.tooltip.add_1": "增加1",
   "cw.ui.tooltip.add_2": "增加2",
   "cw.ui.tooltip.chiller_not_consumed": "在冷却器中使用时不会被消耗",
