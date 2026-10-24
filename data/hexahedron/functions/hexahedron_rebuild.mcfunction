@@ -1,6 +1,6 @@
 # Start the hexahedron rebuild process
-tellraw @p {"text":"Attempting to rebuild the technical bits inside the Hexahedron.","bold":true,"color":"gold"}
-tellraw @p {"text":"Please keep your hands and friends inside the vehicle during this procedure.","color":"yellow"}
+tellraw @p {"translate":"cw.rebuild.start","bold":true,"color":"gold"}
+tellraw @p {"translate":"cw.rebuild.stay","color":"yellow"}
 
 # Force everyone on board
 execute in minecraft:overworld run tp @a 0.5 98 6.5
@@ -42,4 +42,4 @@ execute as @e[type=immersive_portals:portal,name=main_cube] at @s run portal com
 
 # Schedule proper landing in the hexahedron_graveyard
 tag @e[tag=core] add pre_runtime
-tellraw @p {"text":"Done!, sending you to dimension zero to complete the process.","color":"green"}
+tellraw @p {"translate":"cw.rebuild.done","color":"green"}

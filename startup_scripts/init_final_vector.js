@@ -2,7 +2,7 @@ StartupEvents.registry('block', event => {
 
 let final_operator = (step) => {
 	event.create(`vector_operator_step${step}`)
-		.displayName(`§8§lBroken Vector Operator`)
+		.displayName(Text.translatable('cw.pack.vector_operator.broken'))
 		.fullBlock(false)
 		.material("lantern")
 		.soundType("lantern")
