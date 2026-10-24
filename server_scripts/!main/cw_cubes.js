@@ -1531,6 +1531,13 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
     return 1
   })))
 
+  root.then(cmdRoot.literal('expand').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0))
+      .then(cmdRoot.literal('py').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'py'); return 1 }))
+      .then(cmdRoot.literal('px').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'px'); return 1 }))
+      .then(cmdRoot.literal('nx').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nx'); return 1 }))
+      .then(cmdRoot.literal('nz').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nz'); return 1 }))))
+
   root.then(cmdRoot.literal('flush').requires(src => src.hasPermission(2)).executes(ctx => {
     C4_Q = []; C4_BUSY = null
     ctx.source.server.runCommandSilent('tag @e[type=marker,tag=cw_core] remove pre_runtime')
@@ -1752,16 +1759,129 @@ function c4SelfTest(server) {
     + ' cmdSet=' + C4_CAP.cmdSet + ' chunkLoader=' + C4_CL_OK)
 }
 
+// ---------------------------------------------------------------------------- 立方体扩展（每面 +16 格）
+let C4_EXT_TMP = {}   // 未登记槽位的临时扩展状态（仅测试用）
+function c4Ext(cube) {
+  let e = (cube && cube.ext) || {}
+  return {
+    px: Math.max(0, Number(e.px) | 0), nx: Math.max(0, Number(e.nx) | 0),
+    pz: Math.max(0, Number(e.pz) | 0), nz: Math.max(0, Number(e.nz) | 0),
+    py: Math.max(0, Number(e.py) | 0)
+  }
+}
+function c4RoomBox(cx, cz, ext) {
+  return {
+    X0: Math.floor(cx - 8 - 16 * ext.nx), X1: Math.floor(cx + 8 + 16 * ext.px),
+    Z0: Math.floor(cz - 8 - 16 * ext.nz), Z1: Math.floor(cz + 8 + 16 * ext.pz),
+    Y0: 97, Y1: 113 + 16 * ext.py
+  }
+}
+// 与 17x17 同一套方块：地板 / 顶圈 / 四角立柱 / +z 操控台
+function c4BuildRoom(server, dimId, cx, cz, ext) {
+  let b = c4RoomBox(cx, cz, ext), FX = Math.floor(cx), FZ = Math.floor(cz)
+  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { console.warn('[C4] 房间: ' + e) } }
+  run(`fill ${b.X0} ${b.Y0} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z1} minecraft:air`)
+  run(`fill ${b.X0} ${b.Y0} ${b.Z0} ${b.X1} ${b.Y0} ${b.Z1} kubejs:warping_frame_platform`)
+  run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} minecraft:air`)
+  run(`fill ${b.X0} ${b.Y1} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z0} kubejs:warping_frame`)
+  run(`fill ${b.X0} ${b.Y1} ${b.Z1} ${b.X1} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
+  run(`fill ${b.X0} ${b.Y1} ${b.Z0} ${b.X0} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
+  run(`fill ${b.X1} ${b.Y1} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
+  run(`fill ${b.X0} ${b.Y0} ${b.Z0} ${b.X0} ${b.Y1} ${b.Z0} kubejs:warping_frame`)
+  run(`fill ${b.X1} ${b.Y0} ${b.Z1} ${b.X1} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
+  run(`fill ${b.X0} ${b.Y0} ${b.Z1} ${b.X0} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
+  run(`fill ${b.X1} ${b.Y0} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z0} kubejs:warping_frame`)
+  run(`setblock ${FX} ${b.Y0 + 1} ${b.Z1} kubejs:warping_controls`)
+  run(`setblock ${FX + 1} ${b.Y0 + 1} ${b.Z1} kubejs:warping_interface`)
+  run(`setblock ${FX - 1} ${b.Y0 + 1} ${b.Z1} kubejs:warping_disc_drive`)
+  run(`setblock ${FX} ${b.Y0 + 1} ${b.Z1 - 1} kubejs:launch_button[facing=north]`)
+  // 隐形光源：不加的话房间里/透过门看到的目的地笼子是全黑的（看起来就像"门坏了"）
+  run(`setblock ${FX} ${b.Y0 + 8} ${FZ} minecraft:light[level=15]`)
+  return b
+}
+// 6 扇门：位置/尺寸都按当前 ext 算（矩形门）
+function c4MakeRoomPortals(server, slot, idName, ext) {
+  let cx = c4CubeX(slot) + 0.5, cz = C4_Z + 0.5, cy = C4_CORE_Y
+  let b = c4RoomBox(cx, cz, ext)
+  let wx = b.X1 - b.X0 + 1, wz = b.Z1 - b.Z0 + 1, wy = b.Y1 - b.Y0 + 1
+  let ccx = cx + 8 * (ext.px - ext.nx), ccy = cy + 8 * ext.py, ccz = cz + 8 * (ext.pz - ext.nz)
+  let list = [
+    ['y',  ccx, b.Y1 + 1.01, ccz, 0, -90, wx, wz],
+    ['-y', ccx, b.Y0 - 0.01, ccz, 0, 90,  wx, wz],
+    ['x',  b.X1 + 1.01, ccy, ccz, 270, 0, wz, wy],
+    ['-x', b.X0 - 0.01, ccy, ccz, 90, 0,  wz, wy],
+    ['z',  ccx, ccy, b.Z1 + 1.01, 0, 0,  wx, wy],
+    ['-z', ccx, ccy, b.Z0 - 0.01, 180, 0, wx, wy]
+  ]
+  server.runCommandSilent(`execute in minecraft:overworld positioned ${cx} ${cy} ${cz} run kill @e[type=immersive_portals:portal,distance=..80,tag=!cw_lobby]`)
+  let t = 'c4rm' + slot
+  list.forEach(f => {
+    server.runCommandSilent(`execute in minecraft:overworld positioned ${f[1]} ${f[2]} ${f[3]} run summon marker ~ ~ ~ {Rotation:[${f[4]}.0f,${f[5]}.0f],NoGravity:1b,Tags:["${t}","c4f_${f[0]}"]}`)
+  })
+  list.forEach(f => {
+    server.runCommandSilent(`execute in minecraft:overworld as @e[type=marker,tag=${t},tag=c4f_${f[0]}] at @s run portal cb_make_portal ${f[6]} ${f[7]} @s @s main_cube`)
+  })
+  server.runCommandSilent(`kill @e[type=marker,tag=${t}]`)
+  let made = 0
+  c4PortalsNear(server, cx, cy, cz).forEach(p => {
+    if (!p.dir) {
+      let dx = p.entity.x - cx, dy = p.entity.y - cy, dz = p.entity.z - cz
+      let ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz)
+      let dir = (ay >= ax && ay >= az) ? (dy > 0 ? 'y' : '-y') : (ax >= az ? (dx > 0 ? 'x' : '-x') : (dz > 0 ? 'z' : '-z'))
+      try { p.entity.addTag(dir) } catch (e) {}
+      p.dir = dir
+    }
+    try { p.entity.addTag('cw_id_' + idName) } catch (e) {}
+    made++
+  })
+  return made
+}
+// /cwp expand <slot> <y|-y|x|-x|z|-z>：测试/管理入口（物品路径之后接）
+function c4CmdExpand(ctx, slot, face) {
+  let server = ctx.source.server
+  let info = c4TeamOfSlot(slot)
+  let ext = info ? c4Ext(info.cube) : c4Ext({ ext: C4_EXT_TMP[slot] })
+  if (face === 'nz') { if (ext.nz >= 2) { c4Reply(ctx, '-z 已达上限'); return } ext.nz++ }
+  else if (face === 'px') { if (ext.px >= 1) { c4Reply(ctx, '+x 已达上限'); return } ext.px++ }
+  else if (face === 'nx') { if (ext.nx >= 1) { c4Reply(ctx, '-x 已达上限'); return } ext.nx++ }
+  else if (face === 'py') { if (ext.py >= 4) { c4Reply(ctx, '顶部已达上限'); return } ext.py++ }
+  else { c4Reply(ctx, '该面不可扩展（+z 是操控台）'); return }
+  if (info) { info.cube.ext = ext; c4Save() } else { C4_EXT_TMP[slot] = ext }
+  let cx = c4CubeX(slot) + 0.5, cz = C4_Z + 0.5
+  // 先把扩展后的范围 forceload（block 坐标，必须整数），20 tick 后再建，不然 fill/summon 全落空
+  let X0 = Math.floor(cx - 8 - 16 * ext.nx), X1 = Math.floor(cx + 8 + 16 * ext.px)
+  let Z0 = Math.floor(cz - 8 - 16 * ext.nz), Z1 = Math.floor(cz + 8 + 16 * ext.pz)
+  server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (X0 - 8) + ' ' + (Z0 - 8) + ' ' + (X1 + 8) + ' ' + (Z1 + 8))
+  let idName = info ? info.cube.id : ('cube' + slot)
+  server.scheduleInTicks(20, () => {
+    try {
+      c4BuildRoom(server, 'minecraft:overworld', cx, cz, ext)
+      let n = c4MakeRoomPortals(server, slot, idName, ext)
+      console.info('[C4] 扩展 slot' + slot + ' ' + JSON.stringify(ext) + ' 门=' + n)
+    } catch (e) { console.warn('[C4] 扩展失败: ' + e) }
+  })
+  c4Reply(ctx, '扩展已排队：' + face + '（20 tick 后生效）')
+}
+
 // ---------------------------------------------------------------------------- 启动
 ServerEvents.loaded(event => {
   let server = event.server
   c4Db(); c4LoadState(); c4Ftb()
   c4SaveState()
 
-  // 旧存档：给出生点那台 core 补身份 tag（幂等；原包只认 core，所以两个都留）
-  server.runCommandSilent('tag @e[type=marker,tag=core] add cw_core')
-  server.runCommandSilent('tag @e[type=marker,tag=core] add cw_slot0')
-  server.runCommandSilent('tag @e[type=marker,tag=core] add cw_id_lobby')
+  // 出生点那台 core 补身份 tag —— 只认 (0,105.5,0) 附近这一个！
+  // 以前写成 @e[tag=core] 全量打，重启后所有队伍立方体的 core 都被打上 cw_slot0，
+  // 出生点逻辑就会挑到别人的核心，甚至把出生点的门当成自己的门去指（门被挪走就是这么来的）。
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run tag @e[type=marker,tag=core,distance=..3] add cw_core')
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run tag @e[type=marker,tag=cw_core,distance=..3] add cw_slot0')
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run tag @e[type=marker,tag=cw_core,distance=..3] add cw_id_lobby')
+  // 修复旧账：非出生点的 core 身上误加的 cw_slot0 去掉
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run tag @e[type=marker,tag=cw_slot0,distance=8..] remove cw_slot0')
+  // 出生点的 6 扇门锁死（cw_lobby），造门/指门/清门都跳过
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run tag @e[type=immersive_portals:portal,name=main_cube,distance=..15] add cw_lobby')
+  // 清掉出生点 core 上残留的倒计时（否则按钮一按就自己开始跃迁，把出生点的门指走）
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run tag @e[type=marker,tag=cw_core,distance=..3] remove pre_runtime')
+  server.runCommandSilent('execute in minecraft:overworld positioned 0.5 105.5 0.5 run scoreboard players set @e[type=marker,tag=cw_core,distance=..3] pre_runtime 0')
 
   // 放开"指令创建队伍"：FTB Teams 有个 API-only 开关，打开时 /ftbteams party create 会被拒
   if (c4Db().allowPartyCommand !== false) {
