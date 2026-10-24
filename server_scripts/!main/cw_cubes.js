@@ -570,22 +570,40 @@ function c4PreloadFinal(server, slot, job) {
   if (!outer) { console.warn('[C4] 最终预载：拿不到 outer_core'); return }
   let dimId = c4DimOf(outer)
   let x = Math.round(outer.x), y = Math.round(outer.y), z = Math.round(outer.z)
+  // 笼子横跨 17 格，最多压 2×2 区块；t=180 那次 forceload 的是【预判落点】的区块，
+  // 数据包 unfold 之后实际落点可能已经飘出去几十格 → 那些区块没加载 → fill/setblock 全落空，
+  // 结果就是"门在、笼子不在"，走进去直接掉虚空。这里按【最终落点】把 3×3 区块全部常加载。
+  let bx = Number(outer.x), by = Number(outer.y) - 5, bz = Number(outer.z)   // 17x17 的构建基准 = 核心 - 5
   let cx = Math.floor(x / 16) * 16, cz = Math.floor(z / 16) * 16
-  server.runCommandSilent('execute in ' + dimId + ' run forceload add ' + cx + ' ' + cz)
+  server.runCommandSilent('execute in ' + dimId + ' run forceload add ' + (x - 16) + ' ' + (z - 16) + ' ' + (x + 16) + ' ' + (z + 16))
+  // 补建一次笼子（幂等；数据包那次大概率因为区块没加载而全部失败）
+  server.scheduleInTicks(2, () => {
+    try {
+      server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run function hexahedron:build_hexahedron/17x17')
+      server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run setblock ~ ~8 ~ minecraft:light[level=15]')
+      console.info('[C4] 目的地笼子补建 @' + bx + ',' + by + ',' + bz + ' dim=' + dimId)
+    } catch (e) { console.warn('[C4] 目的地笼子补建失败: ' + e) }
+  })
   job.dest = { dim: dimId, x: x, y: y, z: z, cx: cx, cz: cz }
   console.info('[C4] 目的地最终预载 dim=' + dimId + ' @' + x + ',' + y + ',' + z + '（区块 ' + cx + ',' + cz + '）')
 }
 
 // 把 6 扇门指到 destCenter（目标维度 level），可选重建 6 个反向门
-function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId) {
+function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId, idName) {
   if (!destKey) { console.error('[C4] retarget: destKey 为空'); return 0 }
+  // 上下门必须【对面】指：顶门（往上穿）→ 目的地底面（从地板冒出来）；
+  // 底门（往下掉）→ 目的地顶面（从天花板落进房内）。同面指的话，
+  // 顶门会把你送进目的地笼子的天花板外侧、底门送到地板下方 —— 落点就在虚空里，
+  // 而四个侧门正常，于是表现为"有时进得去、有时掉虚空"。
   let off = {
-    'y': [0, C4_FACE, 0], '-y': [0, -C4_FACE, 0],
-    'x': [C4_FACE, 0, 0], '-x': [-C4_FACE, 0, 0],
-    'z': [0, 0, C4_FACE], '-z': [0, 0, -C4_FACE]
+    'y': [0, -C4_DEST_FACE, 0], '-y': [0, C4_DEST_FACE, 0],
+    'x': [C4_DEST_FACE, 0, 0], '-x': [-C4_DEST_FACE, 0, 0],
+    'z': [0, 0, C4_DEST_FACE], '-z': [0, 0, -C4_DEST_FACE]
   }
   let done = 0
   c4PortalsNear(server, cx, cy, cz).forEach(p => {
+    if (c4HasTag(p.entity, 'cw_lobby')) return   // 出生点的门永远不动
+    if (idName && !c4HasTag(p.entity, 'cw_id_' + idName)) return   // 只动本台（tag 驱动）
     if (!p.dir || !off[p.dir]) return
     let o = off[p.dir]
     let pos = c4Vec(dx + o[0], dy + o[1], dz + o[2])
@@ -1065,6 +1083,15 @@ function c4WarpBody(server, job) {
       server.runCommandSilent('execute in ' + p.dim + ' run forceload add ' + p.cx + ' ' + p.cz)
       server.runCommandSilent('execute in ' + p.dim + ' positioned ' + (p.x + 0.5) + ' ' + p.y + ' ' + (p.z + 0.5) +
         ' run kill @e[type=marker,tag=hex_anchor,distance=..1000]')
+      // 数据包偶尔根本召不出 outer_core（dry_ocean 之类维度会失败）→ 整次跃迁空转、按钮一直不回弹。
+      // 按预判落点自己补一个，后面 unfold/指门都有东西可用。
+      let ocNow = null
+      try { ocNow = c4OuterCore(server) } catch (e) {}
+      if (!ocNow) {
+        server.runCommandSilent('execute in ' + p.dim + ' positioned ' + (p.x + 0.5) + ' ' + p.y + ' ' + (p.z + 0.5) +
+          ' run summon marker ~ ~ ~ {NoGravity:1b,Tags:["outer_core"]}')
+        console.info('[C4] 数据包没生成 outer_core → 已按预判落点补一个 @' + p.x + ',' + p.y + ',' + p.z)
+      }
       server.runCommandSilent('execute in ' + p.dim + ' run tp @e[type=marker,tag=outer_core] ' + (p.x + 0.5) + ' ' + p.y + ' ' + (p.z + 0.5))
       console.info('[C4] 落点锁定 @' + p.x + ',' + p.y + ',' + p.z + '（已清该处锚点）')
     } catch (e) { console.warn('[C4] 落点锁定失败: ' + e) }
