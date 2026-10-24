@@ -32,7 +32,7 @@
   "cw.lobby.cmd_blocked": "  指令建队已停用 · 请使用队伍面板",
   "cw.lobby.exists": "⟢ 《%s》基地已就位 · 内部物资保留",
   "cw.lobby.gui": "  队伍面板：My Team → Create a Party",
-  "cw.lobby.need_team": "⟢ 此为配给台 · 需队伍信号方可激活",
+  "cw.lobby.need_team": "⟢ 需要先加入或创建一个队伍：/ftbteams party create <名字>",
   "cw.lobby.no_team": "⟢ 未检测到队伍信号 · 先建立队伍再领取基地",
   "cw.lobby.ready": "⟢ 新的时空传送立方体已创建 · 欢迎《%s》",
   "cw.lobby.seated": "⟢ 已接入《%s》基地",

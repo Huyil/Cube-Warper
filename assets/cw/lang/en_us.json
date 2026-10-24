@@ -32,7 +32,7 @@
   "cw.lobby.cmd_blocked": "  Command-based team creation is disabled · use the team panel",
   "cw.lobby.exists": "⟢ %s base already in place · contents preserved",
   "cw.lobby.gui": "  Team panel: My Team → Create a Party",
-  "cw.lobby.need_team": "⟢ This is the claim pedestal · a team signal is required",
+  "cw.lobby.need_team": "⟢ Join or create a team first: /ftbteams party create <name>",
   "cw.lobby.no_team": "⟢ No team signal · create a team before claiming a base",
   "cw.lobby.ready": "⟢ New warp cube created · welcome, %s",
   "cw.lobby.seated": "⟢ Docked with %s base",

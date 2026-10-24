@@ -271,6 +271,11 @@ function c4Db() {
   if (C4_DB) return C4_DB
   let d = null
   try { d = JsonIO.read(C4_CFG) } catch (e) { d = null }
+  // 旧位置（config/）一次性迁移过来
+  if (!d || typeof d !== 'object') {
+    try { d = JsonIO.read('config/cubarper-cubes.json') } catch (e) { d = null }
+    if (d && typeof d === 'object') { try { JsonIO.write(C4_CFG, d) } catch (e) {} }
+  }
   if (!d || typeof d !== 'object') d = {}
   if (d.nextSlot === undefined) d.nextSlot = 1
   if (!d.cubes || typeof d.cubes !== 'object') d.cubes = {}
@@ -328,6 +333,9 @@ function c4SeedOf(server, slot) {
 // 出生大厅（slot 0）不是可跃迁的基地，它那 6 扇门只会在贴墙处闪烁。
 // 启动时清掉大厅区域内的传送门实体即可，别处（各队基地）不受影响。
 function c4PurgeLobbyPortals(server) {
+  // [TEST-HOLD] 出生点现在被当成"原版双向门"的对照样机：不杀门、不补屏障。
+  // 验证完再恢复（否则每次 /reload 都会杀掉那 6 扇门并重新糊上 1131 格屏障）。
+  return 0
   try {
     let core = c4CoreOfSlot(server, 0)
     if (!core) return 0
@@ -899,9 +907,8 @@ function c4Lobby(server, player) {
   let t = c4Team(player)
   if (!t) { player.tell(c4t('cw.home.no_team')); return }
   if (db.requireParty && !c4IsParty(t)) {
+    // 原来三句压成一句
     player.tell(c4t('cw.lobby.need_team'))
-    player.tell(c4t('cw.lobby.gui'))
-    player.tell(c4t('cw.lobby.cmd_blocked'))
     return
   }
 
@@ -934,7 +941,7 @@ function c4Lobby(server, player) {
   cube.provisioned = true
   c4Save()
 
-  server.scheduleInTicks(6, () => {
+  server.scheduleInTicks(60, () => {
     c4SendToCube(server, c4TeamOnline(t), slot)
     c4TeamOnline(t).forEach(m => {
       m.tell(c4t1('cw.lobby.ready', label))
@@ -1379,7 +1386,7 @@ ServerEvents.commandRegistry(event => {
     let IAT = c4Cls('com.mojang.brigadier.arguments.IntegerArgumentType')
     let names = ['cwp', 'cube']
     for (let i = 0; i < names.length; i++) {
-      let root = cmdRoot.literal(names[i]).requires(src => true)
+      let root = cmdRoot.literal(names[i]).requires(src => src.hasPermission(4))
       c4AttachSubs(root, cmdRoot, IAT, names[i])
       event.register(root)
     }
@@ -1393,6 +1400,9 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   root.then(cmdRoot.literal('info').executes(ctx => { c4CmdInfo(ctx); return 1 }))
 
   root.then(cmdRoot.literal('home').executes(ctx => { c4CmdHome(ctx); return 1 }))
+
+  // /cwp spawn · /cube spawn：回到出生点（基岩 0,0 的出生笼子）
+  root.then(cmdRoot.literal('spawn').executes(ctx => { c4CmdSpawn(ctx); return 1 }))
   root.then(cmdRoot.literal('home').requires(src => src.hasPermission(2))
     .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
       c4CmdHomeSlot(ctx, IAT.getInteger(ctx, 'slot')); return 1
@@ -1598,6 +1608,24 @@ function c4CmdAdopt(ctx, slot) {
   c4Reply(ctx, '槽位 ' + slot + ' 已改绑到《' + cube.name + '》· 内部物资保留')
 }
 
+function c4CmdSpawn(ctx) {
+  let p = c4SrcPlayer(ctx)
+  if (!p) { c4ReplyT(ctx, 'cw.cmd.need_player'); return }
+  c4ClearStrayPreRuntime(ctx.source.server)
+  if (c4Tp(ctx.source.server, p, 'minecraft:overworld', 0.5, 98.0, 5.5)) c4ReplyT(ctx, 'cw.cmd.tp_ok', [])
+  else c4ReplyT(ctx, 'cw.cmd.tp_fail')
+}
+
+// 数据包的倒计时是看 core 上的 pre_runtime 标签/分数；跃迁被中断或残留时会自己开始倒计时，
+// 表现就是"刚被传送回家、立方体就开始倒计时，然后又被送回 spawn"。清理残留（跃迁进行中不动）。
+function c4ClearStrayPreRuntime(server) {
+  if (C4_BUSY) return
+  try {
+    server.runCommandSilent('tag @e[type=marker,tag=pre_runtime] remove pre_runtime')
+    server.runCommandSilent('scoreboard players set @e[type=marker,tag=core] pre_runtime 0')
+  } catch (e) {}
+}
+
 function c4CmdInfo(ctx) {
   let server = ctx.source.server
   let db = c4Db()
@@ -1694,4 +1722,21 @@ ServerEvents.loaded(event => {
 
   // 自检延后 20 tick，逐项隔离（任何一个通道失败都不影响其它）
   server.scheduleInTicks(20, () => { try { c4SelfTest(server) } catch (e) { console.warn('[C4] 自检外层异常: ' + e) } })
+})
+
+// 没有基地的玩家（含新出生）：直接送进基岩维度 0,0 的出生笼子，走到配给台按按钮领基地
+PlayerEvents.loggedIn(event => {
+  try {
+    let p = event.player, server = event.server
+    let t = c4Team(p)
+    let key = t ? c4TeamKey(t) : null
+    let cube = key ? c4CubeOfTeam(key) : null
+    if (cube) return
+    server.scheduleInTicks(20, () => {
+      try {
+        if (p && p.isAlive()) c4Tp(server, p, 'hexahedron:bedrock_bottom', 0.5, 98.0, 5.5)
+        console.info('[C4] 新玩家送入出生笼子: ' + c4Name(p))
+      } catch (e) {}
+    })
+  } catch (e) {}
 })
