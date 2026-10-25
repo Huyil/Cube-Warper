@@ -1,0 +1,6 @@
+{
+  "variants": {
+    "powered=false": { "model": "kubejs:block/altar_signal" },
+    "powered=true": { "model": "kubejs:block/altar_signal" }
+  }
+}

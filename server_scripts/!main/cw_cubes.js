@@ -3855,14 +3855,9 @@ function c4CmdExpand(ctx, slot, face, force) {
     c4Reply(ctx, ok ? ('扩展 ' + face + ' 完成（格子 +1，共 ' + c4Cells(info.cube).length + ' 格）') : '该方向已有格子，未扩建')
     return
   }
-  // 向上：仍走 ext（也只扩基地；c4ApplyExt 已经不碰传送器的 6 门）
-  let oldExt = c4Ext(info.cube)
-  let ext = c4Ext(info.cube)
-  ext.py++
-  info.cube.ext = ext
-  c4Save()
-  c4ApplyExt(server, info.cube, ext, null, 'py', '扩展', oldExt)
-  c4Reply(ctx, '扩展 py 已排队（+16，基地）')
+  // 向上：同样格子化（按控制台/原点格向上加一格）
+  let okPy = c4AddCell(server, info.cube, 'py', null)
+  c4Reply(ctx, okPy ? ('扩展 py 完成（格子 +1，共 ' + c4Cells(info.cube).length + ' 格）') : '那格已经在基地里了')
 }
 
 
@@ -4718,7 +4713,7 @@ function c4RebuildCells(server, cube) {
       if (b.Z0 < Z0) Z0 = b.Z0
       if (b.Z1 > Z1) Z1 = b.Z1
     })
-    run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y0 + ' ' + Z1 + ' kubejs:warping_frame_platform')
+    run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y0 + ' ' + Z1 + ' kubejs:warping_frame_platform replace minecraft:air')
     let a0 = c4BaseAnchor(slot)
     let FX = a0.x, FZ = a0.z
     run('fill ' + (FX - 1) + ' ' + Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + Y0 + ' ' + (FZ + 1) + ' minecraft:air')
@@ -4741,15 +4736,17 @@ function c4AddCell(server, cube, dir, player) {
   let key = c4CellKey(n[0], n[1], n[2])
   if (set[key]) { c4ExpandDeny(player, '那个方向已经是基地的一部分了'); return false }
   let b = c4CellBox(slot, key)
-  // 清空新格体积（含共享边框 → 内部打通）
+  // 只 forceload，不再清空整格（清空会把玩家在新格里的方块一起铲掉）
   try {
     server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (b.X0 - 16) + ' ' + (b.Z0 - 16) + ' ' + (b.X1 + 16) + ' ' + (b.Z1 + 16))
   } catch (eFL2) {}
+  // 打通共享边框那一层（旧格的外墙）：只在这一层清成 air
   try {
-    for (let yy = b.Y0; yy <= b.Y1; yy += 8) {
-      let y2 = Math.min(yy + 7, b.Y1)
-      server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + yy + ' ' + b.Z0 + ' ' + b.X1 + ' ' + y2 + ' ' + b.Z1 + ' minecraft:air')
-    }
+    if (dir === 'px') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X0 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
+    else if (dir === 'nx') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
+    else if (dir === 'pz') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z0 + ' minecraft:air')
+    else if (dir === 'nz') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z1 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
+    else if (dir === 'py') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air')
   } catch (e0) {}
   set[key] = 1
   cube.cells = Object.keys(set)
@@ -4768,8 +4765,12 @@ function c4DoExpand(server, cube, face, player) {
     if (ok) c4ExpandDeny(player, '扩建完成：+16 格（' + face + '，当前 ' + c4Cells(cube).length + ' 格）')
     return
   }
-  if (face === 'py') ext.py++
-  else { c4ExpandDeny(player, '该面不可扩展'); return }
+  if (face === 'py') {
+    let ok = c4AddCell(server, cube, 'py', player)
+    try { if (ok && player && player.tell) c4ExpandDeny(player, '扩建完成：向上 +16 格（共 ' + c4Cells(cube).length + ' 格）') } catch (e2) {}
+    return
+  }
+  { c4ExpandDeny(player, '该面不可扩展'); return }
   let nowMs2 = Date.now()
   if (C4_EXT_TS[slot] && (nowMs2 - C4_EXT_TS[slot]) < 400) { c4ExpandDeny(player, '上一次扩展还在施工（<0.4s）'); return }
   C4_EXT_TS[slot] = nowMs2
