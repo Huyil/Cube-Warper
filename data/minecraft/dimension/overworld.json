@@ -8,7 +8,7 @@
         "features": false,
         "layers": [
           {
-            "block": "kubejs:hexahedron_filling",
+            "block": "minecraft:structure_void",
             "height": 256
           }
         ],

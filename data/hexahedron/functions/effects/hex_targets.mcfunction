@@ -24,4 +24,4 @@ execute as @e[tag=outer_core] at @s run tag @e[distance=..96,type=alexscaves:gum
 execute as @e[tag=outer_core] at @s run tag @e[distance=..96,type=caverns_and_chasms:peeper] add hex_target
 execute as @e[tag=outer_core] at @s run tag @e[distance=..96,type=minecraft:enderman] add hex_target
 
-execute as @e[tag=outer_core] at @s as @e[distance=..15,tag=hex_target] at @s if block ~ ~ ~ kubejs:hexahedron_filling run tp @s ~ ~-500 ~
+execute as @e[tag=outer_core] at @s as @e[distance=..15,tag=hex_target] at @s if block ~ ~ ~ minecraft:structure_void run tp @s ~ ~-500 ~

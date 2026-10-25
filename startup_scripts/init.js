@@ -284,7 +284,7 @@ let eye = (id) => {
 		.soundType("shroomlight")
 		.box (4, 0, 4, 12, 8, 12)
 
-	event.create('hexahedron_filling').waterlogged().displayName(Text.of('正方体'))
+	event.create('hexahedron_filling').displayName(Text.of('正方体'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
@@ -308,7 +308,7 @@ let eye = (id) => {
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_frame_platform').waterlogged().displayName(Text.of('诡异框架平台'))
+	event.create('warping_frame_platform').displayName(Text.of('诡异框架平台'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")

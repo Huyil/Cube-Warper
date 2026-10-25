@@ -1,6 +1,6 @@
 execute positioned 0 100.5 0 in hexahedron:bedrock_bottom if entity @a[tag=!init] run fill ~10 ~-4 ~10 ~-10 ~-4 ~-10 bedrock
 
-execute positioned 0 105.5 0 in hexahedron:bedrock_bottom if entity @a[tag=!init] run fill ~8 ~8 ~8 ~-8 ~-8 ~-8 kubejs:hexahedron_filling
+execute positioned 0 105.5 0 in hexahedron:bedrock_bottom if entity @a[tag=!init] run fill ~8 ~8 ~8 ~-8 ~-8 ~-8 minecraft:structure_void
 execute positioned 0 100.5 0 in hexahedron:bedrock_bottom if entity @a[tag=!init] run function hexahedron:build_hexahedron/17x17
 execute positioned 0 105.5 0 in hexahedron:bedrock_bottom if entity @a[tag=!init] run fill ~6 ~6 ~6 ~-6 ~-6 ~-6 light
 

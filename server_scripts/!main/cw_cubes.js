@@ -20,7 +20,7 @@
 //
 //  分工：
 //    数据包 = 选维度（三格插槽→dimension_seed）+ summon outer_core + 5 秒后 spreadplayers
-//             找地表 + 重建"镜像笼子"（fill hexahedron_filling / light / 17x17）
+//             找地表 + 重建"镜像笼子"（fill structure_void / light / 17x17）
 //    KubeJS = 门指向 / 反向门 / 可见性 / 玩家传送 / 区块加载 / 槽位·大厅·队列
 // =============================================================================================
 
@@ -631,7 +631,7 @@ function c4PreloadFinal(server, slot, job) {
     try {
       server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run function hexahedron:build_hexahedron/17x17')
       server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run setblock ~ ~8 ~ minecraft:light[level=15]')
-      server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 kubejs:hexahedron_filling')
+      server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 minecraft:structure_void')
       console.info('[C4] 目的地笼子补建 @' + bx + ',' + by + ',' + bz + ' dim=' + dimId)
     } catch (e) { console.warn('[C4] 目的地笼子补建失败: ' + e) }
   })
@@ -659,7 +659,7 @@ function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId
   let dcx = dx + 8 * (e.px - e.nx), dcy = dy + 8 * e.py, dcz = dz + 8 * (e.pz - e.nz)
   // 上下门按【同面】映射（原包语义）：顶门→对面顶面、底门→对面底面。
   // 落点被塞进地板/天花板时由 adjustPositionAfterTeleport 抬到安全位置；
-  // 地板洞在落点侧已封（hexahedron_filling），不会再出现"一直下落"的循环。
+  // 地板洞在落点侧已封（structure_void），不会再出现"一直下落"的循环。
   let dstPos = {
     'y':  [dcx, dy + D + 16 * e.py, dcz],
     '-y': [dcx, dy - D, dcz],
@@ -940,7 +940,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   server.runCommandSilent(`kill @e[type=marker,tag=cw_slot${slot}]`)
 
   // ★ 整块清空：把 19×21×19 的立方体体积全部变空气
-  //   原因：hexahedron_filling("正方体") 只是"生成瞬间遮住主世界"的临时遮挡；
+  //   原因：structure_void（原 hexahedron_filling） 只是"生成瞬间遮住主世界"的临时遮挡；
   //   不清掉的话玩家进舱后会被一层隐形方块包住（看起来就是一堵"屏障"），
   //   而且目标坐标若有地形/旧外壳残留也会卡在里面。清空后由 17x17 重建外壳+地板+面板+按钮。
   //   19×21×19 = 7581 格，远低于 fill 上限 32768。
@@ -948,15 +948,15 @@ function c4ProvisionBody(server, slot, teamName, idName) {
     `execute in minecraft:overworld positioned ${x} ${C4_BASE_Y} ${C4_Z} run fill ~-9 ~-5 ~-9 ~9 ~14 ~9 air`)
   c4ChunkLoader(server, slot)
 
-  // 1) 外壳/地板/面板/按钮/排气口（在刚清空的体积里重建；17x17 里的 hexahedron_filling 只补地板 3×3 洞）
+  // 1) 外壳/地板/面板/按钮/排气口（在刚清空的体积里重建；17x17 里的 structure_void 只补地板 3×3 洞）
   server.runCommandSilent(`execute positioned ${x} ${C4_BASE_Y} ${C4_Z} run function hexahedron:build_hexahedron/17x17`)
-  // 1.5) 把 3×3 地板洞下方那格 hexahedron_filling 之外的残余再清一次内部（保险）
-  server.runCommandSilent(`execute in minecraft:overworld positioned ${x} ${C4_BASE_Y} ${C4_Z} run fill ~-7 ~-2 ~-7 ~7 ~12 ~7 air replace kubejs:hexahedron_filling`)
-  // 1.6) 外壳（贴着框梁外表面那一格）整体替换成 hexahedron_filling —— 与 c4BuildRoom(false) 同一套几何，
+  // 1.5) 把 3×3 地板洞下方那格 structure_void 之外的残余再清一次内部（保险）
+  server.runCommandSilent(`execute in minecraft:overworld positioned ${x} ${C4_BASE_Y} ${C4_Z} run fill ~-7 ~-2 ~-7 ~7 ~12 ~7 air replace minecraft:structure_void`)
+  // 1.6) 外壳（贴着框梁外表面那一格）整体替换成 structure_void —— 与 c4BuildRoom(false) 同一套几何，
   //      17x17 只负责房间内部，外层在这里补，门边才不会和框梁 z-fighting。
   if (Number(slot) > 0) {
     try {
-      c4ShellFill(server, 'minecraft:overworld', c4RoomBox(x + 0.5, C4_CORE_Y, C4_Z + 0.5, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'kubejs:hexahedron_filling')
+      c4ShellFill(server, 'minecraft:overworld', c4RoomBox(x + 0.5, C4_CORE_Y, C4_Z + 0.5, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'minecraft:structure_void')
       console.info('[C4] 槽位 ' + slot + ' 外壳 filling 已铺')
     } catch (e) { console.warn('[C4] 外壳 filling 失败: ' + e) }
   }
@@ -1004,7 +1004,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       try {
         server.runCommandSilent('execute in ' + CAGE + ' positioned ' + MX + ' ' + (C4_CORE_Y - 5) + ' ' + MZ + ' run function hexahedron:build_hexahedron/17x17')
         // 落点侧封洞（详见 c4BuildRoom 注释）
-        server.runCommandSilent('execute in ' + CAGE + ' positioned ' + MX + ' ' + (C4_CORE_Y - 5) + ' ' + MZ + ' run fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 kubejs:hexahedron_filling')
+        server.runCommandSilent('execute in ' + CAGE + ' positioned ' + MX + ' ' + (C4_CORE_Y - 5) + ' ' + MZ + ' run fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 minecraft:structure_void')
         // 目的地外壳清成 air（与 c4BuildRoom(true) 一致：目的地不放 filling）
         try { c4ShellFill(server, CAGE, c4RoomBox(MX, C4_CORE_Y, MZ, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'minecraft:air') } catch (e) {}
         console.info('[C4] 槽位 ' + slot + ' 起点笼子已建 @' + MX + ',105.5,' + MZ + ' dim=' + CAGE)
@@ -2401,9 +2401,9 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     c4ClearShellDelta(server, dimId, cx, cy, cz, oldExt, ext)
   }
   run(`fill ${b.X0} ${b.Y0} ${b.Z0} ${b.X1} ${b.Y0} ${b.Z1} kubejs:warping_frame_platform`)
-  // 目的地那一侧必须把 3×3 洞口封上（原包用 hexahedron_filling）：否则从天花板落进来的人
+  // 目的地那一侧必须把 3×3 洞口封上（原包用 filling，这里用 structure_void）：否则从天花板落进来的人
   // 会继续穿过地板洞 → 反向门 → 又被送回起点，形成"一直下落"的死循环。起飞侧保持洞口敞开。
-  if (fillHole) run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} kubejs:hexahedron_filling`)
+  if (fillHole) run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} minecraft:structure_void`)
   else run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} minecraft:air`)
   run(`fill ${b.X0} ${b.Y1} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z0} kubejs:warping_frame`)
   run(`fill ${b.X0} ${b.Y1} ${b.Z1} ${b.X1} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
@@ -2430,16 +2430,16 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   } catch (e) {}
   if (fillHole) {
     // 目的地：内侧墙面只把框梁之间的空气补成 filling（不动框梁/地板/面板/门）
-    run(`fill ${b.X1} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X1} ${b.Y1 - 1} ${b.Z1 - 1} kubejs:hexahedron_filling replace minecraft:air`)
-    run(`fill ${b.X0} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X0} ${b.Y1 - 1} ${b.Z1 - 1} kubejs:hexahedron_filling replace minecraft:air`)
-    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z1} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z1} kubejs:hexahedron_filling replace minecraft:air`)
-    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z0} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z0} kubejs:hexahedron_filling replace minecraft:air`)
-    run(`fill ${b.X0 + 1} ${b.Y1} ${b.Z0 + 1} ${b.X1 - 1} ${b.Y1} ${b.Z1 - 1} kubejs:hexahedron_filling replace minecraft:air`)
+    run(`fill ${b.X1} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X1} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
+    run(`fill ${b.X0} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X0} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
+    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z1} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z1} minecraft:structure_void replace minecraft:air`)
+    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z0} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z0} minecraft:structure_void replace minecraft:air`)
+    run(`fill ${b.X0 + 1} ${b.Y1} ${b.Z0 + 1} ${b.X1 - 1} ${b.Y1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
   }
   // 外壳（贴着框梁外表面的那一格，6 面 + 12 棱 + 8 角）：
-  //   主世界 → 整体替换成 hexahedron_filling（不是只填空气，门边就不会和框梁 z-fighting）
+  //   主世界 → 整体替换成 structure_void（不是只填空气，门边就不会和框梁 z-fighting）
   //   目的地 → 整体清成 air（不放 filling）
-  try { c4ShellFill(server, dimId, b, fillHole ? 'minecraft:air' : 'kubejs:hexahedron_filling') }
+  try { c4ShellFill(server, dimId, b, fillHole ? 'minecraft:air' : 'minecraft:structure_void') }
   catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
   return b
 }
