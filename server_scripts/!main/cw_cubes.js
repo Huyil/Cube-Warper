@@ -979,8 +979,12 @@ function c4MakeReverse(server, slot, dimId, dx, dy, dz, idName) {
   try {
     server.runCommandSilent('execute in ' + dimId + ' positioned ' + dx + ' ' + dy + ' ' + dz + ' run kill @e[type=immersive_portals:portal,distance=..100,tag=!cw_lobby]')
   } catch (e) { console.warn('[C4] 清旧反向门失败: ' + e) }
+  // ⚠ 只对【6 面门】造反向门：3×3 连接门（cw_link*）也是 cw_id_ 成员，
+  //   对它 complete_bi_way_portal 会在落点凭空生出一扇 3×3 反向门，
+  //   随后被 c4SyncDoorTags 按几何误标成 cw_face_*，去重时反而把真正的顶/底门顶掉。
   try {
-    server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName + '] at @s run portal complete_bi_way_portal')
+    server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName
+      + ',tag=!cw_link,tag=!cw_link_up,tag=!cw_link_down,tag=!cw_face_link,tag=!cw_face_link_base] at @s run portal complete_bi_way_portal')
   } catch (e) { console.warn('[C4] complete_bi_way_portal 失败: ' + e) }
   // S1：IP 异步造门 —— complete 直后通常还看不到门，所以 tag 必须过几 tick 再补，不能在这里立刻打。
   // 分 5/15/40/80/120 tick 轮询：门出现后补 cw_face_*/cw_team_*/cw_slot*/cw_id_*/cw_rev_*，并按面去重。
@@ -996,7 +1000,8 @@ function c4MakeReverse(server, slot, dimId, dx, dy, dz, idName) {
         }
         // 一扇都没造出来（区块刚加载/IP 漏了）→ 再 complete 一次补造；已经有门就绝不重复，避免叠门
         if (missing > 0 && synced.total === 0 && i >= 1) {
-          server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName + '] at @s run portal complete_bi_way_portal')
+          server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName
+            + ',tag=!cw_link,tag=!cw_link_up,tag=!cw_link_down,tag=!cw_face_link,tag=!cw_face_link_base] at @s run portal complete_bi_way_portal')
           console.warn('[C4] 反向门仍为 0 → 再 complete 一次（' + t + 't）')
         }
         if (missing === 0 || i === tries.length - 1) {
