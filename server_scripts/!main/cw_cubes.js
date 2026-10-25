@@ -3676,6 +3676,7 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
   let c0 = core || { x: c4CubeX(slot) + 0.5, y: C4_CORE_Y, z: C4_Z + 0.5 }
   let cx = c0.x, cz = c0.z, cy = c0.y
   let T = c4FaceTargets(cx, cy, cz, ext)
+  let box0 = c4RoomBox(cx, cy, cz, ext || { px: 0, nx: 0, pz: 0, nz: 0, py: 0 })
   // 门尺寸固定 17×17（不随 ext 变）：墙变大后门仍是墙中心那一块
   let span = C4_PORTAL_SPAN
   server.runCommandSilent(`execute in minecraft:overworld positioned ${cx} ${cy} ${cz} run kill @e[type=immersive_portals:portal,distance=..80,tag=!cw_lobby,tag=!cw_link]`)
@@ -3693,9 +3694,8 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
         + ' box边界=' + edge)
     }
     let ret = -1
-    // 先把该面 17×17×2 门洞清成 air（bind 的成功经验），再建门
-    // down/up 的门面在地板/天花板外侧，不能清门洞，否则会铲掉整层地板
-    if (d !== 'y' && d !== '-y') c4ClearDoorHole(server, q, d)
+    // 先把墙外 2 层清成 air（bind 的成功经验）；down/up 的门面在地板/天花板外侧，不清
+    if (d !== 'y' && d !== '-y') c4ClearDoorHole(server, box0, d)
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         let mk2 = mk + '_' + attempt
@@ -3704,7 +3704,7 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
         server.runCommandSilent(`execute in minecraft:overworld run kill @e[type=marker,tag=${mk2}]`)
       } catch (e1) { ret = -2 }
       if (c4PortalNearPoint(server, q[0], q[1], q[2], 2)) break
-      if (attempt === 0) c4ClearDoorHole(server, q, d)
+      if (attempt === 0) c4ClearDoorHole(server, box0, d)
     }
     if (!c4PortalNearPoint(server, q[0], q[1], q[2], 2)) {
       failed.push(d)
@@ -3719,18 +3719,18 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
   return synced.total
 }
 // 把某面中心的 17×17×2 门洞清成 air（只清门洞，不动整面墙）
-function c4ClearDoorHole(server, p, dir) {
+function c4ClearDoorHole(server, b, dir) {
+  // 门面现在贴平（开口外 0.01）：再按"门面 ±1 格"往内清，会把框梁/操控台一起铲掉。
+  // 只清「墙外」两格 —— 墙内（框梁、面板、按钮）一格都不碰。
   try {
-    let x = Math.floor(p[0]), y = Math.floor(p[1]), z = Math.floor(p[2])
-    let cmd = ''
-    if (dir === 'x' || dir === '-x') {
-      cmd = 'fill ' + (x - 1) + ' ' + (y - 8) + ' ' + (z - 8) + ' ' + (x + 1) + ' ' + (y + 8) + ' ' + (z + 8) + ' minecraft:air'
-    } else if (dir === 'z' || dir === '-z') {
-      cmd = 'fill ' + (x - 8) + ' ' + (y - 8) + ' ' + (z - 1) + ' ' + (x + 8) + ' ' + (y + 8) + ' ' + (z + 1) + ' minecraft:air'
-    } else {
-      cmd = 'fill ' + (x - 8) + ' ' + (y - 1) + ' ' + (z - 8) + ' ' + (x + 8) + ' ' + (y + 1) + ' ' + (z + 8) + ' minecraft:air'
-    }
-    server.runCommandSilent('execute in minecraft:overworld run ' + cmd)
+    let r = null
+    if (dir === '-x') r = [b.X0 - 2, b.Y0, b.Z0, b.X0 - 1, b.Y1, b.Z1]
+    else if (dir === 'x') r = [b.X1 + 1, b.Y0, b.Z0, b.X1 + 2, b.Y1, b.Z1]
+    else if (dir === '-z') r = [b.X0, b.Y0, b.Z0 - 2, b.X1, b.Y1, b.Z0 - 1]
+    else if (dir === 'z') r = [b.X0, b.Y0, b.Z1 + 1, b.X1, b.Y1, b.Z1 + 2]
+    else return
+    server.runCommandSilent('execute in minecraft:overworld run fill ' + r[0] + ' ' + r[1] + ' ' + r[2]
+      + ' ' + r[3] + ' ' + r[4] + ' ' + r[5] + ' minecraft:air')
   } catch (e) { console.warn('[C4] 清门洞失败: ' + e) }
 }
 // 某点附近有没有 portal（判定单面建门是否成功）
@@ -3881,6 +3881,7 @@ function c4MovePortals(server, slot, idName, ext, core) {
 // 校验：6 个面必须各有一扇、且位置误差 < 1.6；不对就清掉重建（最多 2 次）
 function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
   let T = c4FaceTargets(cx, cy, cz, ext)
+  let box0 = c4RoomBox(cx, cy, cz, ext || { px: 0, nx: 0, pz: 0, nz: 0, py: 0 })
   let synced = { total: 0, killed: 0, faces: {} }
   try { synced = c4SyncDoorTags(server, 'minecraft:overworld', cx, cy, cz, ext, slot, idName, false, 260) }
   catch (e) { console.warn('[C4] 门校验前 tag 同步失败: ' + e) }
@@ -3904,7 +3905,7 @@ function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
       let d = miss[i], f = T[d], q = f.p
       let mk = 'c4ens' + slot + Date.now() + '_' + d.replace('-', 'n')
       let ret = -1
-      if (d !== 'y' && d !== '-y') c4ClearDoorHole(server, q, d)
+      if (d !== 'y' && d !== '-y') c4ClearDoorHole(server, box0, d)
       try {
         server.runCommandSilent(`execute in minecraft:overworld positioned ${q[0]} ${q[1]} ${q[2]} run summon marker ~ ~ ~ {Rotation:[${f.rot[0]}.0f,${f.rot[1]}.0f],NoGravity:1b,Tags:["${mk}"]}`)
         ret = Number(server.runCommandSilent(`execute in minecraft:overworld as @e[type=marker,tag=${mk}] at @s run portal cb_make_portal ${span} ${span} @s @s main_cube`))
