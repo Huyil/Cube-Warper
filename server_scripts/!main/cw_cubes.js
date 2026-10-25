@@ -4755,6 +4755,25 @@ function c4AddCell(server, cube, dir, player) {
   return true
 }
 
+// ── 旧存档迁移：只有 cube.ext、没有 cube.cells 的老存档 → 矩形展开成格子并补外边界 ──
+function c4MigrateExtToCells(server, cube) {
+  if (!cube || !cube.provisioned) return 0
+  if (cube.cellsMigrated) return 0
+  let ext = c4Ext(cube)
+  let set = {}
+  for (let gy = 0; gy <= ext.py; gy++)
+    for (let gx = -ext.nx; gx <= ext.px; gx++)
+      for (let gz = -ext.nz; gz <= ext.pz; gz++)
+        set[gx + ',' + gy + ',' + gz] = 1
+  cube.cells = Object.keys(set)
+  cube.ext = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
+  cube.cellsMigrated = 1
+  c4Save()
+  console.info('[C4] 旧存档迁移 slot=' + cube.slot + ' ext=' + JSON.stringify(ext) + ' → cells=' + cube.cells.length + ' 格')
+  try { c4RebuildCells(server, cube) } catch (eM) { console.warn('[C4] 迁移重建失败: ' + eM) }
+  return cube.cells.length
+}
+
 function c4DoExpand(server, cube, face, player) {
   let slot = Number(cube.slot)          // ⚠ 原来这里直接用 slot，是 ReferenceError（工具右键永远失败）
   let ext = c4Ext(cube)
@@ -5017,6 +5036,13 @@ ServerEvents.tick(event => {
   } catch (e) { console.warn('[C4] 启动复位异常: ' + e) }
   // S5：老 cube.dest → cube.dests[dim]（一次性、幂等）
   try { c4MigrateDests() } catch (eD) { console.warn('[C4] dest 迁移异常: ' + eD) }
+  // 扩建迁移：老存档的 ext（矩形）→ cells（格子），并补外表面屏障/框梁/外壳
+  try {
+    let db0 = c4Db(), cb1 = db0.cubes || {}, nM = 0
+    for (let k1 in cb1) { try { if (c4MigrateExtToCells(event.server, cb1[k1])) nM++ } catch (e1) {} }
+    if (nM > 0) console.info('[C4] 扩建迁移完成：' + nM + ' 台（ext → cells）')
+  } catch (eMig) { console.warn('[C4] 扩建迁移异常: ' + eMig) }
+
   // 传送器布局迁移：老存档把按钮绑在地面（y>50）→ 清掉锚点，走默认（传送器在基地下方 y=10）
   try {
     let db0 = c4Db(), cb0 = db0.cubes || {}, nT = 0
