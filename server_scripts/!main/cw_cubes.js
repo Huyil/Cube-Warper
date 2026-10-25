@@ -292,8 +292,8 @@ function c4SlotForButton(bx, by, bz) {
     let cx = b.x + 0.5, cz = b.z - 6.5
     if (Math.abs(bx - cx) <= 8.6 && Math.abs(bz - cz) <= 8.6 && by >= b.y - 1 && by <= b.y + 15) return Number(c.slot)
   }
-  // 旧存档兜底：按钮还钉在基地 (cubeX, 98, 7) 的老位置 → 按 x 归属到那台（按下时自动迁移到 y=10）
-  if (by === C4_BASE_FLOOR + 1 && bz === Math.floor(C4_Z) + 7) {
+  // 旧存档兜底：只按 y 轴判断（旧按钮在基地层 y=98；新按钮在 y=11），z 不再写死 7
+  if (by === C4_BASE_FLOOR + 1) {
     for (let k in cubes) {
       let c = cubes[k]
       if (!c || !c.provisioned) continue
@@ -2165,17 +2165,27 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
 
   if (slot === 0) { c4Lobby(server, clicker); return }
 
-  // 旧存档过渡：这个按钮还钉在基地 (cubeX, 98, 7) → 自动执行「y=10 新建舱 + 绑定 + 去旧按钮/控制台」，
-  // 本次不跃迁（等价 /cube admin relocate），让老存档按一下按钮就完成迁移。
-  if (by === C4_BASE_FLOOR + 1 && bz === Math.floor(C4_Z) + 7) {
+  // 旧存档过渡：按钮还在基地层（只看 y 轴 = C4_BASE_FLOOR+1）→ 提示 + 自动迁移 + 自动连通 3×3。
+  // 等价 /cube admin relocate + /cube admin hole，本次不跃迁。
+  if (by === C4_BASE_FLOOR + 1) {
     let ts = c4TeamOfSlot(slot)
     if (ts) {
       let nx = Math.floor(c4CubeX(slot)), ny = C4_TELE_FLOOR + 1, nz = Math.floor(C4_Z) + 7
       console.info('[C4] 旧存档按钮迁移 slot' + slot + '：' + bx + ',' + by + ',' + bz + ' → ' + nx + ',' + ny + ',' + nz)
-      try { clicker.tell(Text.of('⟢ 旧基地按钮：正在下层 y=' + C4_TELE_FLOOR + ' 新建传送器并绑定，完成后请到新按钮再按一次')) } catch (e0) {}
+      try {
+        clicker.tell(Text.of('⟢ 检测到旧基地按钮（y=' + by + '）：正在下层 y=' + C4_TELE_FLOOR + ' 新建传送器、绑定队伍并清掉旧按钮/操控台…'))
+      } catch (e0) {}
       try { c4Relocate(server, slot, nx, ny, nz) } catch (eM) { console.warn('[C4] 旧存档按钮迁移失败: ' + eM) }
       // 老按钮/操控台钉在基地 97 层，不在 relocate 的 oldBtn 上 → 单独 strip 掉（旧存档过渡）
       try { c4StripCabin(server, slot, true) } catch (eS) { console.warn('[C4] 旧按钮清理失败: ' + eS) }
+      // 迁移完成后自动把 3×3 洞连通（降级：等门/舱都落位）
+      server.scheduleInTicks(60, () => {
+        let n = 0
+        try { n = c4ActivateHole(server, slot, null) } catch (eH) { console.warn('[C4] 迁移后自动连通 3×3 失败: ' + eH) }
+        try {
+          clicker.tell(Text.of('⟢ 迁移完成：3×3 洞' + (n > 0 ? '已连通' : '未连通（请手持扩展器朝下双击）') + '。请从洞口下去，到 y=' + C4_TELE_FLOOR + ' 的新按钮启动。'))
+        } catch (e1) {}
+      })
       return
     }
   }
