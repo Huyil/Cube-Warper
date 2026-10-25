@@ -4630,15 +4630,127 @@ function c4ApplyExt(server, cube, ext, player, face, verb, oldExt) {
   })
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// 格子化扩建（横向，无上限）
+//   每格 16 深 × 17 高 × 16 宽（相邻格共享 1 格边框：17 = 16+1）
+//   cells 存在 cube.cells：["0,0,0", "1,0,0", ...]（相对基地原点的格坐标）
+//   只建【并集的外边界】：地板、外墙屏障、外框梁、外面那圈 structure_void；
+//   相邻格之间的旧边框在新增时被清掉，内部保持连通。
+// ════════════════════════════════════════════════════════════════════════════
+const C4_CELL = 16
+function c4CellKey(gx, gy, gz) { return gx + ',' + gy + ',' + gz }
+function c4Cells(cube) {
+  let a = (cube && cube.cells) || null
+  if (!a || !a.length) return ['0,0,0']
+  return a
+}
+function c4CellBox(slot, key) {
+  let p = String(key).split(',')
+  let gx = Number(p[0]) | 0, gy = Number(p[1]) | 0, gz = Number(p[2]) | 0
+  let a = c4BaseAnchor(slot)
+  let X0 = a.x - 8 + C4_CELL * gx, Y0 = a.y + C4_CELL * gy, Z0 = a.z - 8 + C4_CELL * gz
+  return { X0: X0, X1: X0 + C4_CELL, Y0: Y0, Y1: Y0 + C4_CELL, Z0: Z0, Z1: Z0 + C4_CELL, gx: gx, gy: gy, gz: gz }
+}
+function c4CellAt(slot, x, y, z) {
+  let a = c4BaseAnchor(slot)
+  return c4CellKey(Math.floor((x - (a.x - 8)) / C4_CELL),
+    Math.floor((y - a.y) / C4_CELL), Math.floor((z - (a.z - 8)) / C4_CELL))
+}
+// 重建并集外边界（幂等；不动已被相邻格包住的内部）
+function c4RebuildCells(server, cube) {
+  let slot = Number(cube.slot)
+  let keys = c4Cells(cube), set = {}
+  keys.forEach(k => { set[k] = 1 })
+  let run = (cmd) => { try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) } catch (e) {} }
+  let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0], ['ny', 0, -1, 0]]
+  keys.forEach(k => {
+    let b = c4CellBox(slot, k)
+    // ① 地板（只在地面层；原点的中心 3×3 留洞）
+    if (b.gy === 0) {
+      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
+      if (b.gx === 0 && b.gz === 0) {
+        let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
+        run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
+      }
+    }
+    // ② 每个"没有邻居"的面：屏障 + 框梁边 + 外面一圈结构空位
+    DIRS.forEach(dd => {
+      let nk = c4CellKey(b.gx + dd[1], b.gy + dd[2], b.gz + dd[3])
+      if (set[nk]) return
+      let dir = dd[0]
+      let x0, x1, y0, y1, z0, z1, sx0, sx1, sy0, sy1, sz0, sz1
+      if (dir === 'px') { x0 = x1 = b.X1; y0 = b.Y0; y1 = b.Y1; z0 = b.Z0; z1 = b.Z1; sx0 = sx1 = b.X1 + 1; sy0 = b.Y0; sy1 = b.Y1; sz0 = b.Z0; sz1 = b.Z1 }
+      else if (dir === 'nx') { x0 = x1 = b.X0; y0 = b.Y0; y1 = b.Y1; z0 = b.Z0; z1 = b.Z1; sx0 = sx1 = b.X0 - 1; sy0 = b.Y0; sy1 = b.Y1; sz0 = b.Z0; sz1 = b.Z1 }
+      else if (dir === 'pz') { z0 = z1 = b.Z1; x0 = b.X0; x1 = b.X1; y0 = b.Y0; y1 = b.Y1; sz0 = sz1 = b.Z1 + 1; sx0 = b.X0; sx1 = b.X1; sy0 = b.Y0; sy1 = b.Y1 }
+      else if (dir === 'nz') { z0 = z1 = b.Z0; x0 = b.X0; x1 = b.X1; y0 = b.Y0; y1 = b.Y1; sz0 = sz1 = b.Z0 - 1; sx0 = b.X0; sx1 = b.X1; sy0 = b.Y0; sy1 = b.Y1 }
+      else if (dir === 'py') { y0 = y1 = b.Y1; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y1 + 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
+      else { y0 = y1 = b.Y0; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y0 - 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
+      // 屏障（不可见、有碰撞）：把外表面封住，人走不出去
+      run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:barrier')
+      // 外面一圈结构空位（挡透视/放置）
+      run('fill ' + sx0 + ' ' + sy0 + ' ' + sz0 + ' ' + sx1 + ' ' + sy1 + ' ' + sz1 + ' minecraft:structure_void')
+      // 框梁：这一面四条边（让外壳看起来还是立方体）
+      if (dir === 'px' || dir === 'nx') {
+        run('fill ' + x0 + ' ' + b.Y1 + ' ' + z0 + ' ' + x1 + ' ' + b.Y1 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + b.Y0 + ' ' + z0 + ' ' + x1 + ' ' + b.Y0 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + b.Y0 + ' ' + z0 + ' ' + x1 + ' ' + b.Y1 + ' ' + z0 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + b.Y0 + ' ' + z1 + ' ' + x1 + ' ' + b.Y1 + ' ' + z1 + ' kubejs:warping_frame')
+      } else if (dir === 'pz' || dir === 'nz') {
+        run('fill ' + x0 + ' ' + b.Y1 + ' ' + z0 + ' ' + x1 + ' ' + b.Y1 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + b.Y0 + ' ' + z0 + ' ' + x1 + ' ' + b.Y0 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + b.Y0 + ' ' + z0 + ' ' + x0 + ' ' + b.Y1 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x1 + ' ' + b.Y0 + ' ' + z0 + ' ' + x1 + ' ' + b.Y1 + ' ' + z1 + ' kubejs:warping_frame')
+      } else if (dir === 'py') {
+        run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y0 + ' ' + z0 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + y0 + ' ' + z1 + ' ' + x1 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x0 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
+        run('fill ' + x1 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
+      }
+    })
+  })
+  console.info('[C4] 格子重建 slot=' + slot + ' cells=' + keys.join(' | '))
+  return keys.length
+}
+// 加一格：先清掉新格体积（打通共享边框），再重建外边界
+function c4AddCell(server, cube, dir, player) {
+  let slot = Number(cube.slot)
+  let set = {}
+  c4Cells(cube).forEach(k => { set[k] = 1 })
+  let p = String(c4CellKey(0, 0, 0))
+  let cur = c4CellAt(slot, Math.floor(player.x), Math.floor(player.y), Math.floor(player.z))
+  let g = String(cur).split(',').map(Number)
+  if (!set[cur]) { g = [0, 0, 0] }   // 玩家在基地外：从原点那格算
+  let n = [g[0] + (dir === 'px' ? 1 : dir === 'nx' ? -1 : 0),
+           g[1] + (dir === 'py' ? 1 : 0),
+           g[2] + (dir === 'pz' ? 1 : dir === 'nz' ? -1 : 0)]
+  let key = c4CellKey(n[0], n[1], n[2])
+  if (set[key]) { c4ExpandDeny(player, '那个方向已经是基地的一部分了'); return false }
+  let b = c4CellBox(slot, key)
+  // 清空新格体积（含共享边框 → 内部打通）
+  try {
+    for (let yy = b.Y0; yy <= b.Y1; yy += 8) {
+      let y2 = Math.min(yy + 7, b.Y1)
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + yy + ' ' + b.Z0 + ' ' + b.X1 + ' ' + y2 + ' ' + b.Z1 + ' minecraft:air')
+    }
+  } catch (e0) {}
+  set[key] = 1
+  cube.cells = Object.keys(set)
+  c4Save()
+  c4RebuildCells(server, cube)
+  return true
+}
+
 function c4DoExpand(server, cube, face, player) {
   let slot = Number(cube.slot)          // ⚠ 原来这里直接用 slot，是 ReferenceError（工具右键永远失败）
   let ext = c4Ext(cube)
   // S4：物品路径同样无上限，每次只加一级（+16）
-  if (face === 'px') ext.px++
-  else if (face === 'nx') ext.nx++
-  else if (face === 'nz') ext.nz++
-  else if (face === 'py') ext.py++
-  else if (face === 'pz') ext.pz++
+  // 横向四面：格子化（每次加一格 16 深，按玩家所在格吸附）
+  if (face === 'px' || face === 'nx' || face === 'pz' || face === 'nz') {
+    let ok = c4AddCell(server, cube, face, player)
+    if (ok) c4ExpandDeny(player, '扩建完成：+16 格（' + face + '，当前 ' + c4Cells(cube).length + ' 格）')
+    return
+  }
+  if (face === 'py') ext.py++
   else { c4ExpandDeny(player, '该面不可扩展'); return }
   let nowMs2 = Date.now()
   if (C4_EXT_TS[slot] && (nowMs2 - C4_EXT_TS[slot]) < 400) { c4ExpandDeny(player, '上一次扩展还在施工（<0.4s）'); return }
