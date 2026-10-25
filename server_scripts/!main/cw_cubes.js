@@ -58,7 +58,9 @@ const C4_DEST_RMAX = 1600      // 首次/原地随机传送：最大距离（再
 // 门面边长：立方体 17 格里，四周框梁各占 1 格 → 真正的开口只有 15×15。
 // 门做成 15×15 正好嵌在开口内（门边=框梁内侧面），侧面不会再压着框梁；
 // 反向门由 IP 从正向门复制尺寸，重建正向门后必须一起重建反向门。
-const C4_LINK_RENDER = false       // 3×3 连接门是否渲染：false = 关掉渲染（看起来就是普通洞口，但仍能传送）
+// ⚠ 实测：isVisible(false) 会把传送一起关掉（物品会直接穿过这扇门掉到下面那扇 17×17 门去），
+//   所以 3×3 连接门必须保持可见；"看不到对面"只能靠别的方式（例如把它做深一点/只留一个洞口）。
+const C4_LINK_RENDER = true        // 3×3 连接门是否渲染（false 会同时关闭传送，不要用）
 const C4_PORTAL_SPAN = 15.0
 const C4_PORTAL_INSET = 0     // 原包门就是 17 宽、平面在壳外 0.01；再内缩会让门边和框梁之间露出黑缝
 const C4_T_PRELOAD = 186      // unfold(t=185) 之后 1 tick：用【最终】坐标做真实预载
@@ -4718,6 +4720,19 @@ function c4ActivateHole(server, slot, player) {
     }
     // 落点 = 地板上 4 格 + 横向让开洞口 2 格（-z 一侧）：
     //   洞口半径 1.5（3×3）+ 玩家半宽 0.3 → 至少让开 1.8 才不会一落地又掉回去；2 格是贴边值。
+    // 传送器地板洞里，3×3 连接门下方 0.25 格还有一扇 down 面（17×17）：
+    // 下落一个 tick 会同时穿过两扇，IP 取哪扇不确定（实测物品会走 down 面 → 跑去跃迁目的地）。
+    // 所以连接门存在期间把 down 面设成 teleportable=false，让洞里只剩 3×3 这一扇。
+    try {
+      let downPortals = c4PortalsInDim(server, 'minecraft:overworld', tx, tel.y + 0.5, tz, 3)
+      downPortals.forEach(e => {
+        if (!c4HasTag(e, 'cw_face_down')) return
+        try { e.setTeleportable(false) } catch (e0) {}
+        try { c4Sync(e) } catch (e1) {}
+        console.info('[C4] 3×3 洞：已关闭下面那扇 down 面的传送（避免抢门） @' + e.x + ',' + e.y + ',' + e.z)
+      })
+    } catch (eDown) { console.warn('[C4] 关闭 down 面传送失败: ' + eDown) }
+
     let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz - 2.0)  // 基地 → 传送器（洞口旁 -z 2 格）
     let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz - 2.0)    // 传送器 → 基地（洞口旁 -z 2 格）
     console.info('[C4] 3×3 洞 slot=' + slot
@@ -4742,7 +4757,15 @@ function c4DeactivateHole(server, slot, player) {
         } catch (e) {}
       })
     })
-    console.info('[C4] 3×3 连接门已拆除 slot=' + slot + '（基地洞/传送器洞两处，口令 ' + n + ' 条）')
+    // 恢复 down 面的传送能力
+    try {
+      c4PortalsInDim(server, 'minecraft:overworld', tel.x + 0.5, tel.y + 0.5, tel.z + 0.5, 3).forEach(e => {
+        if (!c4HasTag(e, 'cw_face_down')) return
+        try { e.setTeleportable(true) } catch (e0) {}
+        try { c4Sync(e) } catch (e1) {}
+      })
+    } catch (eUp) {}
+    console.info('[C4] 3×3 连接门已拆除 slot=' + slot + '（基地洞/传送器洞两处，已恢复 down 面传送）')
     try { c4BarTeam(server, slot, '3×3 连接门已拆除') } catch (e2) {}
     return n
   } catch (e) { console.warn('[C4] 3×3 拆除失败: ' + e); return 0 }
