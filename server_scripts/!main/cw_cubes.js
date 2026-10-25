@@ -2148,6 +2148,32 @@ function c4CleanOldDest(server, slot, job) {
 }
 
 // ---------------------------------------------------------------------------- 事件：按钮
+// ── 保护立方体的"家具"：创造模式也拆不掉（取消事件 + 1t 兜底补回）──────────
+// 只保护按钮/操控台/接口/唱片机这一类"机器零件"；框梁/地板仍留给玩家自由改。
+const C4_PROTECTED_BLOCKS = [
+  'kubejs:launch_button', 'kubejs:launch_button_pressed',
+  'kubejs:warping_controls', 'kubejs:warping_interface', 'kubejs:warping_disc_drive',
+  'kubejs:warping_interface_running'
+]
+BlockEvents.broken(event => {
+  try {
+    let id = String(event.block.id)
+    if (C4_PROTECTED_BLOCKS.indexOf(id) < 0) return
+    event.cancel()
+    let server = event.server, bx = event.block.x, by = event.block.y, bz = event.block.z
+    let dim = 'minecraft:overworld'
+    try { dim = String(event.player.level.dimension) } catch (e0) {}
+    let state = (id === 'kubejs:launch_button') ? 'kubejs:launch_button[facing=north]' : id
+    server.scheduleInTicks(1, () => {
+      try {
+        server.runCommandSilent('execute in ' + dim + ' if block ' + bx + ' ' + by + ' ' + bz + ' minecraft:air run setblock ' + bx + ' ' + by + ' ' + bz + ' ' + state)
+        console.info('[C4] 保护方块被破坏已还原：' + id + ' @' + bx + ',' + by + ',' + bz)
+      } catch (e1) {}
+    })
+    try { event.player.tell(Text.of('⟢ 这是立方体的机器零件，拆不掉（要用拆除器朝下双击来拆 3×3 门）')) } catch (e2) {}
+  } catch (e) { console.warn('[C4] 保护方块检查失败: ' + e) }
+})
+
 BlockEvents.rightClicked('kubejs:launch_button', event => {
   try { if (event.hand && String(event.hand).indexOf('MAIN') < 0) return } catch (e) {}
   try { event.cancel() } catch (e) {}
