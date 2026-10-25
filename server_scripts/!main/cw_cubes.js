@@ -2294,20 +2294,22 @@ function c4ClearShellDelta(server, dimId, cx, cy, cz, oldExt, newExt) {
       run(`fill ${x0} ${y} ${z0} ${x1} ${y2} ${z1} minecraft:air`)
     }
   }
+  // 扩展方向：环带必须【包含旧外壳那一层平面】（ob.X1 / ob.Z1 / ob.Y1 本身），
+  // 否则旧墙/旧顶壳留在新房间内部，就是玩家看到的"扩展后旧边框还在"。
   // ±x
-  if (nb.X1 > ob.X1) box(ob.X1 + 1, nb.Y0, nb.Z0, nb.X1, nb.Y1, nb.Z1)
+  if (nb.X1 > ob.X1) box(ob.X1, nb.Y0, nb.Z0, nb.X1, nb.Y1, nb.Z1)
   if (nb.X1 < ob.X1) box(nb.X1 + 1, ob.Y0 - 1, ob.Z0 - 1, ob.X1 + 1, ob.Y1 + 1, ob.Z1 + 1)
-  if (nb.X0 < ob.X0) box(nb.X0, nb.Y0, nb.Z0, ob.X0 - 1, nb.Y1, nb.Z1)
+  if (nb.X0 < ob.X0) box(nb.X0, nb.Y0, nb.Z0, ob.X0, nb.Y1, nb.Z1)
   if (nb.X0 > ob.X0) box(ob.X0 - 1, ob.Y0 - 1, ob.Z0 - 1, nb.X0 - 1, ob.Y1 + 1, ob.Z1 + 1)
   // ±z
-  if (nb.Z1 > ob.Z1) box(nb.X0, nb.Y0, ob.Z1 + 1, nb.X1, nb.Y1, nb.Z1)
+  if (nb.Z1 > ob.Z1) box(nb.X0, nb.Y0, ob.Z1, nb.X1, nb.Y1, nb.Z1)
   if (nb.Z1 < ob.Z1) box(ob.X0 - 1, ob.Y0 - 1, nb.Z1 + 1, ob.X1 + 1, ob.Y1 + 1, ob.Z1 + 1)
-  if (nb.Z0 < ob.Z0) box(nb.X0, nb.Y0, nb.Z0, nb.X1, nb.Y1, ob.Z0 - 1)
+  if (nb.Z0 < ob.Z0) box(nb.X0, nb.Y0, nb.Z0, nb.X1, nb.Y1, ob.Z0)
   if (nb.Z0 > ob.Z0) box(ob.X0 - 1, ob.Y0 - 1, ob.Z0 - 1, ob.X1 + 1, ob.Y1 + 1, nb.Z0 - 1)
-  // ±y（py 扩展/拆除：旧顶壳那一整层都在 ring 里）
-  if (nb.Y1 > ob.Y1) box(nb.X0, ob.Y1 + 1, nb.Z0, nb.X1, nb.Y1, nb.Z1)
+  // ±y（py 扩展：旧顶壳那一整层在 ring 里；-y 拆：旧地板也在里面）
+  if (nb.Y1 > ob.Y1) box(nb.X0, ob.Y1, nb.Z0, nb.X1, nb.Y1, nb.Z1)
   if (nb.Y1 < ob.Y1) box(ob.X0 - 1, nb.Y1 + 1, ob.Z0 - 1, ob.X1 + 1, ob.Y1 + 1, ob.Z1 + 1)
-  if (nb.Y0 < ob.Y0) box(nb.X0, nb.Y0, nb.Z0, nb.X1, ob.Y0 - 1, nb.Z1)
+  if (nb.Y0 < ob.Y0) box(nb.X0, nb.Y0, nb.Z0, nb.X1, ob.Y0, nb.Z1)
   if (nb.Y0 > ob.Y0) box(ob.X0 - 1, nb.Y0 - 1, ob.Z0 - 1, ob.X1 + 1, ob.Y0 - 1, ob.Z1 + 1)
 }
 
