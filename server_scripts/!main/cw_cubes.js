@@ -4621,6 +4621,7 @@ function c4ApplyExt(server, cube, ext, player, face, verb, oldExt) {
 }
 
 function c4DoExpand(server, cube, face, player) {
+  let slot = Number(cube.slot)          // ⚠ 原来这里直接用 slot，是 ReferenceError（工具右键永远失败）
   let ext = c4Ext(cube)
   // S4：物品路径同样无上限，每次只加一级（+16）
   if (face === 'px') ext.px++
@@ -4670,7 +4671,7 @@ function c4ActivateHole(server, slot, player) {
     let bas = c4BaseAnchor(slot)          // 基地底面 (x, 97, z)
     if (tel.y === bas.y && tel.x === bas.x && tel.z === bas.z) {
       console.warn('[C4] 3×3 洞：传送器与基地同址（slot' + slot + '）→ 先 /cube admin relocate 把传送器搬下去')
-      try { c4BarTeam(server, slot, '3×3 洞：传送器还没搬下去') } catch (eB) {}
+      try { c4BarTeam(server, slot, '隧道: 传送器还没搬下去（先按旧按钮迁移）') } catch (eB) {}
       return 0
     }
     let tx = tel.x + 0.5, tz = tel.z + 0.5
@@ -4695,10 +4696,29 @@ function c4ActivateHole(server, slot, player) {
           + (p[0] + 1) + ' ' + (p[1] + dy0) + ' ' + (p[2] + 1) + ' minecraft:air destroy') } catch (e2) {}
       })
     })
+    // ③.5 基地洞口围一圈玻璃（5×5 环，中间 3×3 留空）——只在生成 3×3 门之前铺一次
+    try {
+      let gx = Math.floor(bx), gz = Math.floor(bz), gy = bas.y
+      ;[[gx - 2, gz - 2, gx + 2, gz - 2], [gx - 2, gz + 2, gx + 2, gz + 2],
+        [gx - 2, gz - 1, gx - 2, gz + 1], [gx + 2, gz - 1, gx + 2, gz + 1]].forEach(r => {
+        try {
+          server.runCommandSilent('execute in minecraft:overworld run fill ' + r[0] + ' ' + gy + ' ' + r[1] + ' '
+            + r[2] + ' ' + gy + ' ' + r[3] + ' minecraft:glass')
+        } catch (eG) {}
+      })
+      console.info('[C4] 基地洞口玻璃圈：5×5 环 @' + gx + ',' + gy + ',' + gz + '（中间 3×3 留空）')
+    } catch (eG2) { console.warn('[C4] 基地玻璃圈失败: ' + eG2) }
+
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
+    // 只在【基地侧】建一扇下行门；传送器侧不建门（避免和下面 down 面抢），
+    // 而是在传送器洞中心放一块玻璃当落脚点 —— 落点就能直接对准正下方、不用横向偏移。
     let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.80, z: bz }, 3, 90)
-    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.50, z: tz }, 3, 90)   // 底下这扇再低 0.3
+    let B = null
+    try {
+      server.runCommandSilent('execute in minecraft:overworld run setblock ' + Math.floor(tx) + ' ' + tel.y + ' ' + Math.floor(tz) + ' minecraft:glass')
+      console.info('[C4] 隧道：传送器洞中心放玻璃 @' + Math.floor(tx) + ',' + tel.y + ',' + Math.floor(tz))
+    } catch (eGl) {}
 
     let aim = (e, tag, dx, dy, dz) => {
       if (!e) return false
@@ -4720,25 +4740,12 @@ function c4ActivateHole(server, slot, player) {
     }
     // 落点 = 地板上 4 格 + 横向让开洞口 2 格（-z 一侧）：
     //   洞口半径 1.5（3×3）+ 玩家半宽 0.3 → 至少让开 1.8 才不会一落地又掉回去；2 格是贴边值。
-    // 传送器地板洞里，3×3 连接门下方 0.25 格还有一扇 down 面（17×17）：
-    // 下落一个 tick 会同时穿过两扇，IP 取哪扇不确定（实测物品会走 down 面 → 跑去跃迁目的地）。
-    // 所以连接门存在期间把 down 面设成 teleportable=false，让洞里只剩 3×3 这一扇。
-    try {
-      let downPortals = c4PortalsInDim(server, 'minecraft:overworld', tx, tel.y + 0.5, tz, 3)
-      downPortals.forEach(e => {
-        if (!c4HasTag(e, 'cw_face_down')) return
-        try { e.setTeleportable(false) } catch (e0) {}
-        try { c4Sync(e) } catch (e1) {}
-        console.info('[C4] 3×3 洞：已关闭下面那扇 down 面的传送（避免抢门） @' + e.x + ',' + e.y + ',' + e.z)
-      })
-    } catch (eDown) { console.warn('[C4] 关闭 down 面传送失败: ' + eDown) }
-
-    let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz - 2.0)  // 基地 → 传送器（洞口旁 -z 2 格）
-    let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz - 2.0)    // 传送器 → 基地（洞口旁 -z 2 格）
-    console.info('[C4] 3×3 洞 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + '→' + tx + ',' + (tel.y + 5) + ',' + (tz - 2.0) + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + '→' + bx + ',' + (bas.y + 5) + ',' + (bz - 2.0) + (okB ? ' OK' : ' 失败'))
-    try { c4BarTeam(server, slot, '3×3 洞已连通：跳进洞里可往返基地 / 传送器') } catch (e3) {}
+    let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz)   // 基地 → 传送器（洞中心正下方，不错位）
+    let okB = false
+    console.info('[C4] 隧道 slot=' + slot
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → 传送器正下方 ' + tx + ',' + (tel.y + 5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + '（传送器侧不建门，洞中心已放玻璃）')
+    try { c4BarTeam(server, slot, '隧道: 基地 ↔ 传送器 已连通') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
 }
@@ -4757,16 +4764,8 @@ function c4DeactivateHole(server, slot, player) {
         } catch (e) {}
       })
     })
-    // 恢复 down 面的传送能力
-    try {
-      c4PortalsInDim(server, 'minecraft:overworld', tel.x + 0.5, tel.y + 0.5, tel.z + 0.5, 3).forEach(e => {
-        if (!c4HasTag(e, 'cw_face_down')) return
-        try { e.setTeleportable(true) } catch (e0) {}
-        try { c4Sync(e) } catch (e1) {}
-      })
-    } catch (eUp) {}
-    console.info('[C4] 3×3 连接门已拆除 slot=' + slot + '（基地洞/传送器洞两处，已恢复 down 面传送）')
-    try { c4BarTeam(server, slot, '3×3 连接门已拆除') } catch (e2) {}
+    console.info('[C4] 隧道已拆除 slot=' + slot + '（基地洞/传送器洞两处）')
+    try { c4BarTeam(server, slot, '隧道: 已拆除') } catch (e2) {}
     return n
   } catch (e) { console.warn('[C4] 3×3 拆除失败: ' + e); return 0 }
 }
@@ -4788,7 +4787,7 @@ function c4ToolUse(event, reduce) {
         let last0 = C4_HOLE_CLICK[k0]
         if (!last0 || now0 - last0 > 5000) {
           C4_HOLE_CLICK[k0] = now0
-          c4ExpandDeny(p, reduce ? '3×3 连接洞：再右键一次确认【拆除】' : '3×3 连接洞：再右键一次确认激活')
+          c4ExpandDeny(p, reduce ? '隧道: 再右键一次确认【拆除】' : '隧道: 再右键一次确认激活')
           return
         }
         C4_HOLE_CLICK[k0] = 0
@@ -4806,6 +4805,11 @@ function c4ToolUse(event, reduce) {
     if (pitch < -50) face = 'py'
     else if (pitch > 50) { c4ExpandDeny(p, '底面不可操作'); return }
     else face = ['z', 'nx', 'nz', 'px'][Math.round(yaw / 90) % 4]   // +z/-x/-z/+x 四面都能扩
+    // +z 面原来是操控台那一面：只有传送器按钮已经搬到 y=11（新布局）时才允许扩基地 +z
+    if (face === 'z' && Math.floor(c4BtnPos(cube.slot).y) !== 11) {
+      c4ExpandDeny(p, '+z 面要等传送器搬到 y=11 之后才能扩（旧基地请先按一次旧按钮完成迁移）')
+      return
+    }
     let now = Date.now(), k = (reduce ? 'r:' : 'e:') + c4Name(p)
     let last = C4_EXP_CLICK[k]
     if (!last || last.face !== face || now - last.t > 2000) {
