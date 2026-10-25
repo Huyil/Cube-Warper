@@ -3845,52 +3845,26 @@ function c4PortalNearPoint(server, x, y, z, r) {
 // force = 显式跳过"内腔有建筑"安全闸（命令本来就要权限 4，OP 自担风险）
 function c4CmdExpand(ctx, slot, face, force) {
   let server = ctx.source.server
-  let nowMs = Date.now()
-  if (C4_EXT_TS[slot] && (nowMs - C4_EXT_TS[slot]) < 400) {
-    c4Reply(ctx, '槽位 ' + slot + ' 上一次扩展还在施工（<0.4s），稍后再试')
-    return
-  }
-  C4_EXT_TS[slot] = nowMs
   if (face !== 'nz' && face !== 'px' && face !== 'nx' && face !== 'py' && face !== 'pz') { c4Reply(ctx, '该面不可扩展'); return }
-  // —— 修法 1：命令时同步算 + 落盘（回调里不再写 ext）——
   C4_DB = null
   let info = c4TeamOfSlot(slot)
-  let cur = c4Ext(info ? info.cube : { ext: C4_EXT_TMP[slot] })
-  let oldJson = JSON.stringify(cur)
-  if (face === 'nz') cur.nz++
-  else if (face === 'px') cur.px++
-  else if (face === 'nx') cur.nx++
-  else if (face === 'py') cur.py++
-  else if (face === 'pz') cur.pz++
-  let oldExt = c4Ext({ ext: JSON.parse(oldJson) })
-  if (info) { info.cube.ext = cur; c4Save() } else { C4_EXT_TMP[slot] = cur; c4Save() }
-  C4_EXT_BUSY[slot] = true
-  let tp = c4TeleCore(slot)
-  let idName = info ? info.cube.id : ('cube' + slot)
-  let g = C4_GEN
-  let inside = c4CountInside(server, tp.x, tp.y, tp.z, oldExt)
-  server.runCommandSilent('execute in minecraft:overworld run forceload add '
-    + Math.floor(tp.x - 8 - 16 * oldExt.nx - 16) + ' ' + Math.floor(tp.z - 8 - 16 * oldExt.nz - 16) + ' '
-    + Math.floor(tp.x + 8 + 16 * oldExt.px + 80) + ' ' + Math.floor(tp.z + 8 + 16 * oldExt.pz + 80))
-  server.scheduleInTicks(2, () => {
-    try {
-      if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（扩展 slot' + slot + '）'); C4_EXT_BUSY[slot] = false; return }
-      // 修法 2：回调里重新取对象/取 ext（用于建舱），但**绝不写回**
-      C4_DB = null
-      let info2 = c4TeamOfSlot(slot)
-      let ext2 = c4Ext(info2 ? info2.cube : { ext: C4_EXT_TMP[slot] })
-      c4BuildRoom(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext2, false, 'shell', oldExt, slot)
-      let n = 6
-      c4BuildDoorsWithRetry(server, slot, idName, ext2, tp, '扩展 slot=' + slot + ' face=' + face)
-      let sx = 17 + 16 * (ext2.px + ext2.nx), sz = 17 + 16 * (ext2.pz + ext2.nz), sy = 17 + 16 * ext2.py
-      console.info('[C4] 扩展 slot=' + slot + ' face=' + face + ' 旧ext=' + oldJson + ' 新ext=' + JSON.stringify(ext2)
-        + ' 内腔方块=' + inside + '（保留） 门=' + n)
-      c4Reply(ctx, '扩展 ' + face + ' 完成 · 立方体 ' + sx + '×' + sz + '×' + sy + '（本次 +16，可继续扩）')
-    } catch (e) { console.warn('[C4] 扩展失败: ' + e); c4Reply(ctx, '扩展失败: ' + e) }
-    C4_EXT_BUSY[slot] = false
-  })
-  c4Reply(ctx, '扩展已排队：' + face + '（本次 +16，已写入 ext=' + JSON.stringify(cur) + '）')
+  if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+  // 横向四面 → 格子化（只扩基地，绝不动传送器）
+  if (face === 'px' || face === 'nx' || face === 'pz' || face === 'nz') {
+    let ok = c4AddCell(server, info.cube, face, null)
+    c4Reply(ctx, ok ? ('扩展 ' + face + ' 完成（格子 +1，共 ' + c4Cells(info.cube).length + ' 格）') : '该方向已有格子，未扩建')
+    return
+  }
+  // 向上：仍走 ext（也只扩基地；c4ApplyExt 已经不碰传送器的 6 门）
+  let oldExt = c4Ext(info.cube)
+  let ext = c4Ext(info.cube)
+  ext.py++
+  info.cube.ext = ext
+  c4Save()
+  c4ApplyExt(server, info.cube, ext, null, 'py', '扩展', oldExt)
+  c4Reply(ctx, '扩展 py 已排队（+16，基地）')
 }
+
 
 // ---------------------------------------------------------------------------- 启动
 ServerEvents.loaded(event => {
