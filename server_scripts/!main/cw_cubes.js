@@ -2861,15 +2861,19 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   let seed = 0
   try { seed = c4ReadSeed(server, slot) } catch (e6) { seed = 0 }
   let dest = c4DestOf(info.cube, C4_SEED_DIMS[seed] || C4_SEED_DIMS[0])
+  let bc1 = c4BaseCore(slot)
+  let rDimId = dest ? String(dest.dim) : 'hexahedron:bedrock_bottom'
+  let rpx = dest ? (Number(dest.x) + 0.5) : bc1.x
+  let rpy = dest ? (Number(dest.y) + 0.5) : bc1.y
+  let rpz = dest ? (Number(dest.z) + 0.5) : bc1.z
   try {
-    if (dest) {
-      c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(dest.dim), dest.x + 0.5, dest.y + 0.5, dest.z + 0.5,
-        false, dest.dim, cubeId, ext, false, slot)
-    } else {
-      c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey('hexahedron:bedrock_bottom'), tp.x, tp.y, tp.z,
-        false, 'hexahedron:bedrock_bottom', cubeId, ext, false, slot)
-    }
+    c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(rDimId), rpx, rpy, rpz, false, rDimId, cubeId, ext, false, slot)
   } catch (e7) {}
+  // 搬家/第一次指门后同样补反向门（否则到了目的地回不来）
+  server.scheduleInTicks(20, () => {
+    try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) }
+    catch (eR1) { console.warn('[C4] relocate 反向门失败: ' + eR1) }
+  })
   // 门洞清理会把 down/up 面整层 17×17 清掉（含地板/操控台/按钮）→ 建完门后立刻补回来
   try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e9) {}
   server.scheduleInTicks(20, () => {
@@ -4171,17 +4175,22 @@ function c4BuildTeleporter(server, slot, a, logIt) {
   } catch (eK) {}
   let moved = 0
   try { moved = c4MakeRoomPortals(server, slot, idName, ext0, { x: cx, y: cy, z: cz }) } catch (e) { console.warn('[C4] 传送器建门失败: ' + e) }
-  // 门按原目的地重指（有固定落点指落点，没有指起始笼）
+  // 门按原目的地重指（有固定落点指落点，没有指【起始笼子】——注意不是传送器自己的坐标！）
   let dest = (info && info.cube && info.cube.dest && info.cube.dest.dim) ? info.cube.dest : null
+  let bc = c4BaseCore(slot)   // 起始笼子核心 (x+0.5, 105.5, 0.5)
+  let destDimId = dest ? String(dest.dim) : 'hexahedron:bedrock_bottom'
+  let destKey = c4DimKey(destDimId)
+  let dpx = dest ? (Number(dest.x) + 0.5) : bc.x
+  let dpy = dest ? (Number(dest.y) + 0.5) : bc.y
+  let dpz = dest ? (Number(dest.z) + 0.5) : bc.z
   try {
-    if (dest) {
-      c4Retarget(server, cx, cy, cz, c4DimKey(dest.dim), Number(dest.x) + 0.5, Number(dest.y) + 0.5, Number(dest.z) + 0.5,
-        false, dest.dim, idName, ext0, false, slot)
-    } else {
-      c4Retarget(server, cx, cy, cz, c4DimKey('hexahedron:bedrock_bottom'), cx, cy, cz, false,
-        'hexahedron:bedrock_bottom', idName, ext0, false, slot)
-    }
+    c4Retarget(server, cx, cy, cz, destKey, dpx, dpy, dpz, false, destDimId, idName, ext0, false, slot)
   } catch (e) { console.warn('[C4] 传送器指门失败: ' + e) }
+  // 第一次指门必须同时造【反向门】，否则到了目的地回不来（原来这里完全没有）
+  server.scheduleInTicks(20, () => {
+    try { c4MakeReverse(server, slot, destDimId, dpx, dpy, dpz, idName) }
+    catch (eR) { console.warn('[C4] 传送器反向门失败: ' + eR) }
+  })
   server.scheduleInTicks(10, () => {
     try { c4EnsureSix(server, slot, idName, cx, cy, cz, ext0, 2) } catch (e) {}
   })
