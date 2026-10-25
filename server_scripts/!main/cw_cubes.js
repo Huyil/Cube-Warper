@@ -4650,8 +4650,8 @@ function c4DoReduce(server, cube, face, player) {
 }
 
 // 3×3 连接洞激活：基地洞 ↔ 传送器洞，各一扇「从上方跳下」的单向水平门
-//   基地洞   (bas.x+0.5, bas.y+0.80, bas.z+0.5) → 传送器天花板下 (telTop-1.5)
-//   传送器洞 (tel.x+0.5, tel.y+0.80, tel.z+0.5) → 基地天花板下   (basTop-1.5)
+//   基地洞   (bas.x+0.5, bas.y+0.80, bas.z+0.5) → 传送器地板上 4 格 (tel.y+5)
+//   传送器洞 (tel.x+0.5, tel.y+0.80, tel.z+0.5) → 基地地板上 4 格   (bas.y+5)
 // cb_make_portal 直接生成、不建反向门 = 单向；重复激活先杀旧门再建（幂等）。
 function c4ActivateHole(server, slot, player) {
   try {
@@ -4702,11 +4702,12 @@ function c4ActivateHole(server, slot, player) {
           c4Vec(dx, dy, dz), e.x, e.y, e.z)
       } catch (e1) { return false }
     }
-    let okA = aim(A, 'cw_link_down', tx, telTop - 1.5, tz)   // 基地 → 传送器天花板下
-    let okB = aim(B, 'cw_link_up', bx, basTop - 1.5, bz)     // 传送器 → 基地天花板下
+    // 落点 = 地板面上方 4 格（原来贴天花板下 1.5 格）：掉得短、不摔，门里看到的是房间内部而不是天花
+    let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz)      // 基地 → 传送器（地板上 4 格）
+    let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz)        // 传送器 → 基地（地板上 4 格）
     console.info('[C4] 3×3 洞 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + '→' + tx + ',' + (telTop - 1.5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.80) + ',' + tz + '→' + bx + ',' + (basTop - 1.5) + ',' + bz + (okB ? ' OK' : ' 失败'))
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + '→' + tx + ',' + (tel.y + 5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.80) + ',' + tz + '→' + bx + ',' + (bas.y + 5) + ',' + bz + (okB ? ' OK' : ' 失败'))
     try { c4BarTeam(server, slot, '3×3 洞已连通：跳进洞里可往返基地 / 传送器') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
