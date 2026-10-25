@@ -3926,12 +3926,20 @@ function c4ExpandDeny(p, msg) { try { p.tell(Text.of('⟢ ' + msg)) } catch (e) 
 function c4InBase(p, slot) {
   try {
     if (c4DimOf(p) !== 'minecraft:overworld') return false
-    let a = c4BaseAnchor(slot)
     let info = c4TeamOfSlot(slot)
-    let ext = info ? c4Ext(info.cube) : c4Ext(null)
-    let b = c4RoomBox(a.x + 0.5, a.y + 8.5, a.z + 0.5, ext)
-    return p.x >= b.X0 - 1 && p.x <= b.X1 + 2 && p.z >= b.Z0 - 1 && p.z <= b.Z1 + 2
-      && p.y >= b.Y0 - 1 && p.y <= b.Y1 + 2
+    let keys = c4Cells(info ? info.cube : null)
+    let X0 = 1e9, X1 = -1e9, Y0 = 1e9, Y1 = -1e9, Z0 = 1e9, Z1 = -1e9
+    keys.forEach(k => {
+      let b = c4CellBox(slot, k)
+      if (b.X0 < X0) X0 = b.X0
+      if (b.X1 > X1) X1 = b.X1
+      if (b.Y0 < Y0) Y0 = b.Y0
+      if (b.Y1 > Y1) Y1 = b.Y1
+      if (b.Z0 < Z0) Z0 = b.Z0
+      if (b.Z1 > Z1) Z1 = b.Z1
+    })
+    return p.x >= X0 - 1 && p.x <= X1 + 2 && p.z >= Z0 - 1 && p.z <= Z1 + 2
+      && p.y >= Y0 - 1 && p.y <= Y1 + 2
   } catch (e) { return false }
 }
 function c4AtConsole(p, cube) {
@@ -4636,17 +4644,22 @@ function c4RebuildCells(server, cube) {
   let keys = c4Cells(cube), set = {}
   keys.forEach(k => { set[k] = 1 })
   let run = (cmd) => { try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) } catch (e) {} }
-  let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0], ['ny', 0, -1, 0]]
+  // 先把并集范围 forceload（否则超出范围的 fill 会静默失败——地板不铺、屏障不刷）
+  try {
+    let X0 = 1e9, X1 = -1e9, Z0 = 1e9, Z1 = -1e9
+    keys.forEach(k => {
+      let b = c4CellBox(slot, k)
+      if (b.X0 < X0) X0 = b.X0
+      if (b.X1 > X1) X1 = b.X1
+      if (b.Z0 < Z0) Z0 = b.Z0
+      if (b.Z1 > Z1) Z1 = b.Z1
+    })
+    run('forceload add ' + (X0 - 16) + ' ' + (Z0 - 16) + ' ' + (X1 + 16) + ' ' + (Z1 + 16))
+  } catch (eFL) {}
+  // 注意：不处理 ny（底面）——底面是地板，铺 barrier 会把地板变成屏障
+  let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0]]
   keys.forEach(k => {
     let b = c4CellBox(slot, k)
-    // ① 地板（只在地面层；原点的中心 3×3 留洞）
-    if (b.gy === 0) {
-      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
-      if (b.gx === 0 && b.gz === 0) {
-        let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
-        run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
-      }
-    }
     // ② 每个"没有邻居"的面：屏障 + 框梁边 + 外面一圈结构空位
     DIRS.forEach(dd => {
       let nk = c4CellKey(b.gx + dd[1], b.gy + dd[2], b.gz + dd[3])
@@ -4659,8 +4672,12 @@ function c4RebuildCells(server, cube) {
       else if (dir === 'nz') { z0 = z1 = b.Z0; x0 = b.X0; x1 = b.X1; y0 = b.Y0; y1 = b.Y1; sz0 = sz1 = b.Z0 - 1; sx0 = b.X0; sx1 = b.X1; sy0 = b.Y0; sy1 = b.Y1 }
       else if (dir === 'py') { y0 = y1 = b.Y1; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y1 + 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
       else { y0 = y1 = b.Y0; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y0 - 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
-      // 屏障（不可见、有碰撞）：把外表面封住，人走不出去
-      run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:barrier')
+      // 屏障（不可见、有碰撞）：把外表面封住，人走不出去。
+      // 侧面从地板上一格开始（Y0+1），否则会把地板那层也刷成屏障。
+      let by0 = (dir === 'py') ? y0 : (y0 + 1)
+      run('fill ' + x0 + ' ' + by0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:barrier')
+      // 底面下方那格：结构空位（不再放屏障）
+      if (b.gy === 0) run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:structure_void')
       // 外面一圈结构空位（挡透视/放置）
       run('fill ' + sx0 + ' ' + sy0 + ' ' + sz0 + ' ' + sx1 + ' ' + sy1 + ' ' + sz1 + ' minecraft:structure_void')
       // 框梁：这一面四条边（让外壳看起来还是立方体）
@@ -4681,7 +4698,31 @@ function c4RebuildCells(server, cube) {
         run('fill ' + x1 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
       }
     })
+    // 地板最后铺：这一层必须是 platform（侧面屏障只到 Y0+1，不会覆盖它）
+    if (b.gy === 0) {
+      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
+      if (b.gx === 0 && b.gz === 0) {
+        let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
+        run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
+      }
+    }
   })
+  // 最后统一铺一遍地板（整个并集包围盒，一次覆盖）——避免逐格顺序/边界列被屏障盖住
+  try {
+    let X0 = 1e9, X1 = -1e9, Y0 = 1e9, Z0 = 1e9, Z1 = -1e9
+    keys.forEach(k => {
+      let b = c4CellBox(slot, k)
+      if (b.X0 < X0) X0 = b.X0
+      if (b.X1 > X1) X1 = b.X1
+      if (b.Y0 < Y0) Y0 = b.Y0
+      if (b.Z0 < Z0) Z0 = b.Z0
+      if (b.Z1 > Z1) Z1 = b.Z1
+    })
+    run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y0 + ' ' + Z1 + ' kubejs:warping_frame_platform')
+    let a0 = c4BaseAnchor(slot)
+    let FX = a0.x, FZ = a0.z
+    run('fill ' + (FX - 1) + ' ' + Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + Y0 + ' ' + (FZ + 1) + ' minecraft:air')
+  } catch (eF2) {}
   console.info('[C4] 格子重建 slot=' + slot + ' cells=' + keys.join(' | '))
   return keys.length
 }
@@ -4701,6 +4742,9 @@ function c4AddCell(server, cube, dir, player) {
   if (set[key]) { c4ExpandDeny(player, '那个方向已经是基地的一部分了'); return false }
   let b = c4CellBox(slot, key)
   // 清空新格体积（含共享边框 → 内部打通）
+  try {
+    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (b.X0 - 16) + ' ' + (b.Z0 - 16) + ' ' + (b.X1 + 16) + ' ' + (b.Z1 + 16))
+  } catch (eFL2) {}
   try {
     for (let yy = b.Y0; yy <= b.Y1; yy += 8) {
       let y2 = Math.min(yy + 7, b.Y1)
