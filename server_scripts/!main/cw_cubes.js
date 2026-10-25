@@ -73,7 +73,8 @@ let C4_GEN = 1
 try { C4_GEN = (Number(global.C4_GEN) || 0) + 1; global.C4_GEN = C4_GEN } catch (eGen) {}
 // 每槽扩展锁：施工期间拒绝新的扩展（避免两次构建互相覆盖）
 let C4_EXT_BUSY = {}
-let C4_EXT_TS = {}   // 每槽最近一次扩展时间（软锁：<400ms 视为抢跑，1s 间隔正常放行）
+let C4_EXT_TS = {}
+let C4_HOLE_CLICK = {}   // 3×3 连接洞二次确认   // 每槽最近一次扩展时间（软锁：<400ms 视为抢跑，1s 间隔正常放行）
 let C4_Q = []
 let C4_BUSY = null
 let C4_STATE = { worldStarted: false }
@@ -2508,6 +2509,12 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
             return 1
           }))))))
 
+  // 调试：/cube admin hole <slot> —— 直接激活 3×3 基地门（等价朝下双击）
+  root.then(cmdRoot.literal('hole').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
+      c4ActivateHole(ctx.source.server, IAT.getInteger(ctx, 'slot'), null); return 1
+    })))
+
   // 临时解锁：/cube admin ext reset <slot> —— ext 清零并按 17³ 重建舱体+6 门
   root.then(cmdRoot.literal('ext').requires(src => src.hasPermission(4))
     .then(cmdRoot.literal('reset')
@@ -2685,6 +2692,12 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   let cubeId = info.cube.id || ('cube' + slot)
   let ext = c4Ext(info.cube)
   let oldBtn = c4BtnPos(slot)
+  let hadLink = false
+  try {
+    c4PortalsInDim(server, 'minecraft:overworld', oldBtn.x, oldBtn.y, oldBtn.z, 40).forEach(e => {
+      if (c4HasTag(e, 'cw_face_link')) hadLink = true
+    })
+  } catch (eHL) {}
   // 核心由新按钮派生（按钮在 +z 内壁、地板上一格）
   let cx = bx2 + 0.5, cy = by2 + 7.5, cz = bz2 - 6.5
   let b = c4RoomBox(cx, cy, cz, ext)
@@ -2694,20 +2707,37 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
     + ' 新btn=' + bx2 + ',' + by2 + ',' + bz2 + ' box=' + b.X0 + '..' + b.X1 + '/' + b.Y0 + '..' + b.Y1 + '/' + b.Z0 + '..' + b.Z1)
   // ⓪ 先 forceload 目标范围（整数）
   try { server.runCommandSilent('execute in ' + dim + ' run forceload add ' + (b.X0 - 32) + ' ' + (b.Z0 - 32) + ' ' + (b.X1 + 32) + ' ' + (b.Z1 + 32)) } catch (e0) {}
-  // ① flag=2 逐块：把 box 外 2 层整体砌成 frame（实体密封壳），不触发更新、水进不来
-  let t0 = Date.now()
-  let lvOw = c4OwLevel(server)
-  if (!lvOw) lvOw = c4Level(server, dim)
-  let shellN = 0
-  if (lvOw) shellN = c4Flag2Fill(lvOw, b.X0 - 2, b.Y0 - 2, b.Z0 - 2, b.X1 + 2, b.Y1 + 2, b.Z1 + 2, 'kubejs:warping_frame')
-  // ② 再把内部（含 ±1 一圈）清成 air（同样 flag=2，不流水）
-  let airN = 0
-  if (lvOw) airN = c4Flag2Fill(lvOw, b.X0 - 1, b.Y0 - 1, b.Z0 - 1, b.X1 + 1, b.Y1 + 1, b.Z1 + 1, 'minecraft:air')
-  console.info('[C4] setBlock flag=2 放壳=' + shellN + ' 块 清内=' + airN + ' 块 用时=' + (Date.now() - t0) + 'ms')
-  // ③ 顶部之上 / 底部之下各 2 层空气（在密封壳之外，给门留空间）
-  if (lvOw) { c4Flag2Fill(lvOw, b.X0 - 2, b.Y1 + 3, b.Z0 - 2, b.X1 + 2, b.Y1 + 4, b.Z1 + 2, 'minecraft:air'); c4Flag2Fill(lvOw, b.X0 - 2, b.Y0 - 4, b.Z0 - 2, b.X1 + 2, b.Y0 - 3, b.Z1 + 2, 'minecraft:air') }
-  // ④ 内腔用 flag=2 直接建（地板/洞口/顶圈/四角/家具/光源）
-  try { c4PlaceRoomFlag2(lvOw, b, { x: bx2, y: by2, z: bz2 }) } catch (e2) { console.warn('[C4] relocate 建房失败: ' + e2) }
+  // ⓪ 密封外箱：box 各边外扩 3 格，flag=2 砌完整外壳（断水），壳与舱之间 3 格空腔清 air
+  let lvOw2 = c4OwLevel(server) || c4Level(server, dim)
+  if (lvOw2) {
+    let XA = b.X0 - 3, XB = b.X1 + 3, YA = b.Y0 - 3, YB = b.Y1 + 3, ZA = b.Z0 - 3, ZB = b.Z1 + 3
+    let shellN = c4Flag2Fill(lvOw2, XA, YA, ZA, XB, YB, ZB, 'kubejs:warping_frame')
+    c4Flag2Fill(lvOw2, XA + 1, YA + 1, ZA + 1, XB - 1, YB - 1, ZB - 1, 'minecraft:air')
+    // 壳外 2 格也清 air（避免水贴在壳上）
+    c4Flag2Fill(lvOw2, XA - 2, YA - 2, ZA - 2, XB + 2, YA - 1, ZB + 2, 'minecraft:air')
+    c4Flag2Fill(lvOw2, XA - 2, YB + 1, ZA - 2, XB + 2, YB + 2, ZB + 2, 'minecraft:air')
+    c4Flag2Fill(lvOw2, XA - 2, YA - 2, ZA - 2, XA - 1, YB + 2, ZB + 2, 'minecraft:air')
+    c4Flag2Fill(lvOw2, XB + 1, YA - 2, ZA - 2, XB + 2, YB + 2, ZB + 2, 'minecraft:air')
+    c4Flag2Fill(lvOw2, XA - 2, YA - 2, ZA - 2, XB + 2, YB + 2, ZA - 1, 'minecraft:air')
+    c4Flag2Fill(lvOw2, XA - 2, YA - 2, ZB + 1, XB + 2, YB + 2, ZB + 2, 'minecraft:air')
+    console.info('[C4] 密封外箱=建成 壳内空腔=清空 shell=' + shellN + ' water=0')
+  }
+  // ① 贴模板（原点=最小角；模板自带框梁笼子/地板/中心 3×3 洞/7 个通风口/按钮/操控台）
+  run('place template hexahedron:cw_teleporter ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0)
+  // ② 中心 3×3 洞保持 air（默认通向下方的 17×17 跃迁门）
+  let FXh = Math.floor(cx), FZh = Math.floor(cz)
+  try {
+    server.runCommandSilent('execute in ' + dim + ' run fill ' + (FXh - 1) + ' ' + b.Y0 + ' ' + (FZh - 1) + ' ' + (FXh + 1) + ' ' + b.Y0 + ' ' + (FZh + 1) + ' minecraft:air')
+  } catch (eLock) {}
+  // ③ 洞正下方 1 格深水池（3×3 水源，落点防摔）
+  let lvW = c4OwLevel(server) || c4Level(server, dim)
+  if (lvW) {
+    // 水池会泡住 3×3 门平面（实测导致实体不传送）→ 改为空气，保持门面畅通
+    try { c4Flag2Fill(lvW, FXh - 1, b.Y0 - 1, FZh - 1, FXh + 1, b.Y0 - 1, FZh + 1, 'minecraft:air') } catch (eW) {}
+    console.info('[C4] relocate 舱内洞下方=air（无水池，3×3 门面畅通）')
+  }
+  // ④ 补光源（模板未必带）
+  if (lvW) { try { c4Flag2One(lvW, FXh, b.Y0 + 8, FZh, 'minecraft:light') } catch (eL) {} }
   // ⑤ 清旧锚点：旧 6 门 + 旧按钮/操控台/接口/唱片机（旧房间壳保留）
   let killed = 0
   try {
@@ -2715,7 +2745,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
       try {
         if (!c4IsPortal(e)) return
         if (c4DimOf(e) !== dim) return
-        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link')) return
+        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
         if (!(c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot))) return
         e.discard(); killed++
       } catch (err) {}
@@ -2755,8 +2785,11 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e8) {}
     try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e10) {}
   })
+  server.scheduleInTicks(30, () => {
+    try { if (hadLink) c4ActivateHole(server, slot, null) } catch (eHL2) {}
+  })
   console.info('[C4] relocate 完成 slot=' + slot + ' 旧=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
-    + ' → 新=' + bx2 + ',' + by2 + ',' + bz2 + ' 门=' + made + ' 旧门清=' + killed)
+    + ' → 新=' + bx2 + ',' + by2 + ',' + bz2 + ' 门=' + made + ' 旧门清=' + killed + ' link恢复=' + hadLink)
 }
 
 function c4CmdRelocate(ctx, slot, x, y, z) {
@@ -2834,7 +2867,7 @@ function c4CmdDoors(ctx, slot) {
       try {
         if (!c4IsPortal(e)) return
         if (c4DimOf(e) !== 'minecraft:overworld') return
-        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link')) return
+        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
         if (!(c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot))) return
         e.discard(); killed++
       } catch (err) {}
@@ -3317,7 +3350,7 @@ const C4_FACES = {
   e: { x: 8.94, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
   n: { x: 0.50, y: 7.50, z: -14.94, ext: 'nz', sign: -1 },
   s: { x: 0.50, y: 7.50, z: 1.94, ext: 'pz', sign: 1 },
-  d: { x: 0.50, y: -0.94, z: -6.50, ext: null, sign: 0 },
+  d: { x: 0.50, y: -1.44, z: -6.50, ext: null, sign: 0 },
   u: { x: 0.50, y: 15.94, z: -6.50, ext: 'py', sign: 1 }
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
@@ -3549,7 +3582,7 @@ function c4SyncDoorTags(server, dimId, cx, cy, cz, ext, slot, cubeId, isRev, rad
 function c4CountFaceDoors(server, cx, cy, cz, r) {
   let n = 0
   c4PortalsInDim(server, 'minecraft:overworld', cx, cy, cz, r || 96).forEach(e => {
-    if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link')) return
+    if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
     if (c4FaceOf(e)) n++
   })
   return n
@@ -3601,7 +3634,8 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
     }
     let ret = -1
     // 先把该面 17×17×2 门洞清成 air（bind 的成功经验），再建门
-    c4ClearDoorHole(server, q, d)
+    // down/up 的门面在地板/天花板外侧，不能清门洞，否则会铲掉整层地板
+    if (d !== 'y' && d !== '-y') c4ClearDoorHole(server, q, d)
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         let mk2 = mk + '_' + attempt
@@ -3810,7 +3844,7 @@ function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
       let d = miss[i], f = T[d], q = f.p
       let mk = 'c4ens' + slot + Date.now() + '_' + d.replace('-', 'n')
       let ret = -1
-      c4ClearDoorHole(server, q, d)
+      if (d !== 'y' && d !== '-y') c4ClearDoorHole(server, q, d)
       try {
         server.runCommandSilent(`execute in minecraft:overworld positioned ${q[0]} ${q[1]} ${q[2]} run summon marker ~ ~ ~ {Rotation:[${f.rot[0]}.0f,${f.rot[1]}.0f],NoGravity:1b,Tags:["${mk}"]}`)
         ret = Number(server.runCommandSilent(`execute in minecraft:overworld as @e[type=marker,tag=${mk}] at @s run portal cb_make_portal ${span} ${span} @s @s main_cube`))
@@ -4247,7 +4281,7 @@ function c4CmdBind(ctx, slot, x, y, z) {
       try {
         if (!c4IsPortal(e)) return
         if (c4DimOf(e) !== 'minecraft:overworld') return
-        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link')) return
+        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
         if (!c4FaceOf(e)) return
         let own = c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot)
         if (!own) {
@@ -4413,12 +4447,88 @@ function c4DoReduce(server, cube, face, player) {
   c4ApplyExt(server, cube, ext, player, face, '拆除', c4Ext(cube))   // 拆除不返还材料
 }
 
+// 3×3 连接洞激活：拆封块 + 建 3×3 门 + 保水池
+function c4ActivateHole(server, slot, player) {
+  try {
+    let info = c4TeamOfSlot(slot)
+    if (!info || !info.cube) return
+    let cubeId = info.cube.id || ('cube' + slot)
+    let btn = c4BtnPos(slot)
+    let Y0 = btn.y - 1
+    let FX = btn.x, FZ = btn.z - 7
+    let lv = c4OwLevel(server) || c4Level(server, 'minecraft:overworld')
+    // 拆封块（若有遗留）+ 保水池
+    if (lv) c4Flag2Fill(lv, FX - 1, Y0, FZ - 1, FX + 1, Y0, FZ + 1, 'minecraft:air')
+    if (lv) c4Flag2Fill(lv, FX - 1, Y0 - 1, FZ - 1, FX + 1, Y0 - 1, FZ + 1, 'minecraft:water')
+    // 先清掉旧的 3×3 基地门（重复激活不叠加）
+    try { server.runCommandSilent('execute in minecraft:overworld positioned ' + (FX + 0.5) + ' ' + (Y0 + 0.5) + ' ' + (FZ + 0.5) + ' run kill @e[type=immersive_portals:portal,tag=cw_face_link,distance=..15]') } catch (eKill) {}
+    // 在 y=Y0-0.05 新建独立 3×3 门（下方 17×17 门在 Y0-0.44）
+    let px = FX + 0.5, py = Y0 + 0.75, pz = FZ + 0.5
+    let mk = 'c4hole' + slot + Date.now()
+    try {
+      server.runCommandSilent('execute in minecraft:overworld positioned ' + px + ' ' + py + ' ' + pz
+        + ' run summon marker ~ ~ ~ {Rotation:[0.0f,90.0f],NoGravity:1b,Tags:["' + mk + '"]}')
+      server.runCommandSilent('execute in minecraft:overworld as @e[type=marker,tag=' + mk + '] at @s run portal cb_make_portal 3 3 @s @s main_cube')
+      server.runCommandSilent('execute in minecraft:overworld run kill @e[type=marker,tag=' + mk + ']')
+    } catch (e1) {}
+    // 只给“新门”打标签（distance 0.05 排除 10.06 的 down 门）
+    let at = 'execute in minecraft:overworld positioned ' + px + ' ' + py + ' ' + pz + ' run tag @e[type=immersive_portals:portal,distance=..0.05] '
+    try {
+      server.runCommandSilent(at + 'add cw_face_link')
+      server.runCommandSilent(at + 'add cw_slot' + slot)
+      server.runCommandSilent(at + 'add cw_id_' + cubeId)
+      let hs = c4TeamOfSlot(slot)
+      if (hs && hs.key) server.runCommandSilent(at + 'add cw_team_' + c4TagSafe(hs.key))
+      // 防止误标到 down 门
+      server.runCommandSilent('execute in minecraft:overworld run tag @e[type=immersive_portals:portal,tag=cw_face_down] remove cw_face_link')
+      // 目的地 = 基地（基地核心 = slot*4000+8.5, 99, 0.5；基地地板洞上方 2 格）
+      let bx = slot * 4000 + 8.5, by = 99.0, bz = 0.5
+      server.runCommandSilent('execute in minecraft:overworld positioned ' + px + ' ' + py + ' ' + pz
+        + ' run data merge entity @e[type=immersive_portals:portal,tag=cw_face_link,distance=..0.2,limit=1] '
+        + '{destinationX:' + bx + 'd,destinationY:' + by + 'd,destinationZ:' + bz + 'd,dimensionTo:"minecraft:overworld"}')
+      // 基地侧：地板中心 3×3 铺玻璃（与地板同高），下方再垫一层 frame（防打碎后从边缘掉到基地外）
+      try {
+        let lvB = c4OwLevel(server) || c4Level(server, 'minecraft:overworld')
+        let gx = slot * 4000 + 8
+        if (lvB) {
+          // 玻璃用 destroy 模式：原本有玩家方块会掉成物品，不静默吞掉
+          try { server.runCommandSilent('execute in minecraft:overworld run fill ' + (gx - 1) + ' 97 -1 ' + (gx + 1) + ' 97 1 minecraft:glass destroy') } catch (eG) {}
+          c4Flag2Fill(lvB, gx - 1, 96, -1, gx + 1, 96, 1, 'kubejs:warping_frame')
+          console.info('[C4] 激活：玻璃=9格(destroy) 垫层=9格 门(3.0)@' + px + ',' + py + ',' + pz + ' dest=基地')
+        }
+      } catch (eSeal) {}
+    } catch (e2) { console.warn('[C4] 3×3 基地门打标/目标失败: ' + e2) }
+    console.info('[C4] 3×3 基地门已激活 slot=' + slot + ' 平面 y=' + py + ' 位置=' + px + ',' + py + ',' + pz)
+    console.info('[C4] 激活：玻璃=9格(destroy) 垫层=9格 门(3.0)@' + px + ',' + py + ',' + pz + ' dest=基地')
+    try { c4BarTeam(server, slot, '3×3 基地门已激活') } catch (e3) {}
+  } catch (e) { console.warn('[C4] 3×3 基地门激活失败: ' + e) }
+}
+
 function c4ToolUse(event, reduce) {
   try {
     let p = event.player, server = event.server
     let t = c4Team(p), key = t ? c4TeamKey(t) : null
     let cube = key ? c4CubeOfTeam(key) : null
     if (!cube) { c4ExpandDeny(p, '你还没有立方体'); return }
+    // 3×3 地板洞激活：手持扩展器、视线朝下、在洞口 5 格内，双击确认
+    if (!reduce && Number(p.pitch) > 55) {
+      let info0 = c4TeamOfSlot(cube.slot)
+      let btn0 = c4BtnPos(cube.slot)
+      let hx = btn0.x, hz = btn0.z - 7
+      let dd = Math.sqrt(Math.pow(p.x - (hx + 0.5), 2) + Math.pow(p.z - (hz + 0.5), 2))
+      if (dd < 5.5 && Math.abs(p.y - (btn0.y - 1)) < 6) {
+        let now0 = Date.now(), k0 = 'hole:' + c4Name(p) + ':' + cube.slot
+        let last0 = C4_HOLE_CLICK[k0]
+        if (!last0 || now0 - last0 > 5000) {
+          C4_HOLE_CLICK[k0] = now0
+          c4ExpandDeny(p, '3×3 连接洞：再右键一次确认激活')
+          return
+        }
+        C4_HOLE_CLICK[k0] = 0
+        c4ActivateHole(server, cube.slot, p)
+        return
+      }
+    }
     if (!c4AtConsole(p, cube)) { c4ExpandDeny(p, '需要站在操控台前'); return }
     let yaw = ((Number(p.yaw) % 360) + 360) % 360
     let pitch = Number(p.pitch)
