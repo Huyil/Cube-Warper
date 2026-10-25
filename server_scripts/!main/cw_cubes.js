@@ -1138,31 +1138,28 @@ function c4ConsumeSlot(server, slot, i) {
   return false
 }
 
-// 动作条：原包 processors/travel_actionbar 的轮播（5/9/13/17 tick 后归零），分数取本台核心的 dimension_seed
-const C4_TRAVEL_KEYS = ['cw.actionbar.traveling_1', 'cw.actionbar.traveling_2', 'cw.actionbar.traveling_3', 'cw.actionbar.traveling_4']
-const C4_TRAVEL_TICKS = [5, 9, 13, 17]
+// 动作条：`排队 N · 正在前往维度 #seed`（排队为 0 时省略前半段；seed 是最终种子，不是 1..4 计数）
+function c4TravelText(job) {
+  let q = C4_Q.length
+  let seed = (job && job.seedShown !== undefined) ? job.seedShown : 0
+  return (q > 0 ? ('排队 ' + q + ' · ') : '') + '正在前往维度 #' + seed
+}
 function c4StartTravelBar(server, slot, job, seed) {
   try {
+    job.seedShown = seed
     let x = Math.floor(c4CubeX(slot))
     server.runCommandSilent('scoreboard players set @e[type=marker,tag=cw_slot' + slot + '] dimension_seed ' + seed)
     server.runCommandSilent('execute in minecraft:overworld positioned ' + x + ' ' + C4_CORE_Y + ' ' + C4_Z + ' run tag @a[distance=..50] add travel_actionbar')
-    server.runCommandSilent('scoreboard players set @a[tag=travel_actionbar] travel_actionbar 0')
+    console.info('[C4] 槽位 ' + slot + ' 动作条：' + c4TravelText(job) + '（seed=' + seed + '）')
   } catch (e) { console.warn('[C4] 动作条启动失败: ' + e) }
-  c4TravelBarTick(server, slot, job, seed, 0)
+  c4TravelBarTick(server, slot, job, 0)
 }
-function c4TravelBarTick(server, slot, job, seed, n) {
-  if (!job || C4_BUSY !== job || n > 400) return
+function c4TravelBarTick(server, slot, job, n) {
+  if (!job || C4_BUSY !== job || n > 600) return
   try {
-    server.runCommandSilent('scoreboard players add @a[tag=travel_actionbar] travel_actionbar 1')
-    for (let k = 0; k < C4_TRAVEL_TICKS.length; k++) {
-      // 原包用 score 组件显示 dimension_seed；这里用字面量（分数选择器必须是单实体，@e 会被解析成空）
-      let json = '["",{"translate":"' + C4_TRAVEL_KEYS[k] + '","bold":true,"color":"dark_aqua"},'
-        + '{"text":"' + seed + '","bold":true,"color":"aqua"}]'
-      server.runCommandSilent('title @a[tag=travel_actionbar,scores={travel_actionbar=' + C4_TRAVEL_TICKS[k] + '}] actionbar ' + json)
-    }
-    server.runCommandSilent('scoreboard players set @a[tag=travel_actionbar,scores={travel_actionbar=17}] travel_actionbar 0')
+    server.runCommandSilent('title @a[tag=travel_actionbar] actionbar {"text":"' + c4TravelText(job) + '","color":"aqua","bold":true}')
   } catch (e) { console.warn('[C4] 动作条 tick 失败: ' + e) }
-  server.scheduleInTicks(1, () => c4TravelBarTick(server, slot, job, seed, n + 1))
+  server.scheduleInTicks(1, () => c4TravelBarTick(server, slot, job, n + 1))
 }
 
 // 自主跃迁：选维度（安全白名单）+ 高度图找地表（方案 A：不整平地形）
@@ -1196,6 +1193,12 @@ function c4PickDestForSeed(server, slot, seed) {
 }
 
 // ---------------------------------------------------------------------------- 跃迁（串行队列）
+// 这台车是否正在跃迁/排队：按钮按下期间不再接受第二次触发
+function c4SlotInFlight(slot) {
+  if (C4_BUSY && Number(C4_BUSY.slot) === Number(slot)) return true
+  for (let i = 0; i < C4_Q.length; i++) if (Number(C4_Q[i].slot) === Number(slot)) return true
+  return false
+}
 function c4Enqueue(server, slot, teamKey, clickerName) {
   for (let i = 0; i < C4_Q.length; i++) if (C4_Q[i].slot === slot) { C4_Q.splice(i, 1); break }
   C4_Q.push({ slot: slot, teamKey: teamKey, clicker: clickerName || null, riders: [] })
@@ -1288,20 +1291,10 @@ function c4WarpBody(server, job) {
     c4WarpEnd(server, slot, label, job)
     return
   }
-  console.info('[C4] 槽位 ' + slot + ' 乘客筛选完成：舱内 ' + riders.length + ' / 外待机 ' + absent.length + ' / 他队 ' + outsiders.length)
+  // 轮到本台才走到这里：队列里的作业在此之前不读插槽、不消耗（c4Pump 串行发放）
+  console.info('[C4] 槽位 ' + slot + ' 轮到（前方队列剩 ' + C4_Q.length + '）：舱内 ' + riders.length + ' / 外待机 ' + absent.length + ' / 他队 ' + outsiders.length)
   job.riders = riders.map(x => c4Name(x))
-  // 按下按钮不再把玩家拉去座位：跃迁是"门在动"，人留在原地即可
-  c4TellTeam(server, slot, c4t1('cw.warp.ready', label))
-  if (absent.length > 0) {
-    let names = []
-    absent.forEach(p => names.push(c4Name(p)))
-    c4TellTeam(server, slot, c4t1('cw.warp.absent', names.join('、')))
-  }
-  if (outsiders.length > 0) {
-    let names = []
-    outsiders.forEach(p => names.push(c4Name(p)))
-    c4TellTeam(server, slot, c4t1('cw.warp.outsiders', names.join('、')))
-  }
+  // 聊天框保持安静：倒计时/排队只走动作条，聊天只留失败提示（见 perform 的回滚分支）
 
   // —— 自主跃迁（KubeJS 控制）：选维度 → 高度图找地表 → 建笼 → 逐面指门 + 反向门 ——
   let idName = (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot)
@@ -1312,21 +1305,17 @@ function c4WarpBody(server, job) {
   let dx = d.x + 0.5, dz = d.z + 0.5, dy = d.y + 0.5
   let fx = Math.floor(dx), fz = Math.floor(dz)
   server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
-  // 剧场版时间轴（对齐原包 processors/runtime）：t=1 按下动画，t=20/40/60 逐格结算+消耗，
-  // t=60 起动作条，t=80 粒子爆发后进入自主跃迁。
+  // 剧场版时间轴（对齐原包 processors/runtime）：按键音已在右键那一刻播过，这里只做
+  // 按下动画 + 动作条，“t=20/40/60 逐格结算+消耗，t=80 粒子爆发后进入自主跃迁”。
   let bx = c4CubeX(slot)
   let atCore = `execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run `
-  let atBeep = `execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y - 4} ${C4_Z + 4} run `
   server.scheduleInTicks(1, () => {
     if (C4_BUSY !== job) return
     try {
-      // 原包 runtime.mcfunction:14-17 的四连音
-      server.runCommandSilent(atCore + 'playsound block.bamboo_wood_button.click_on master @a ~ ~ ~ 0 1')
-      server.runCommandSilent(atCore + 'playsound mekanism:tile.machine.antiprotonic_nucleosynthesizer master @a ~ ~ ~ 1 0')
-      server.runCommandSilent(atBeep + 'playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 0')
-      server.runCommandSilent(atBeep + 'playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 0')
-      server.runCommandSilent(atCore + 'setblock ~ ~-7 ~7 kubejs:launch_button_pressed')
-      server.runCommandSilent(atCore + 'setblock ~1 ~-7 ~8 kubejs:warping_interface_running')
+      server.runCommandSilent(atCore + 'setblock ~ ~-7 ~' + (c4SlotZ(slot) - 1) + ' kubejs:launch_button_pressed')
+      server.runCommandSilent(atCore + 'setblock ~1 ~-7 ~' + c4SlotZ(slot) + ' kubejs:warping_interface_running')
+      // 倒计时文字只走动作条：正在前往维度 #seed（排队数实时刷新）
+      c4StartTravelBar(server, slot, job, d.seed)
     } catch (e) { console.warn('[C4] 按下动画失败: ' + e) }
   })
   // 原包 runtime.mcfunction:21-23：+1 → 0 → -1，每格 1 秒；种子按消耗顺序逐格累加
@@ -1363,7 +1352,9 @@ function c4WarpBody(server, job) {
         console.info('[C4] 槽位 ' + slot + ' 最终目的地 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
       } catch (e) { console.warn('[C4] 重选目的地失败: ' + e) }
     }
-    c4StartTravelBar(server, slot, job, seedAcc)   // 原包 t=60：50 格内玩家加 travel_actionbar
+    // 动作条在 t=1 就已经跑起来，这里只把显示值换成最终 seed（循环下一 tick 自动刷新）
+    job.seedShown = seedAcc
+    console.info('[C4] 槽位 ' + slot + ' 最终 seed=' + seedAcc + '，动作条：' + c4TravelText(job))
   })
   console.info('[C4] 槽位 ' + slot + ' 剧场版时间轴：t=1 按下 / t=20,40,60 消耗 / t=80 跃迁（seed=' + d.seed + '）')
   console.info('[C4] 槽位 ' + slot + ' 自主跃迁 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
@@ -1372,7 +1363,11 @@ function c4WarpBody(server, job) {
     try {
       try { server.runCommandSilent(c4ForceloadBox(slot, true)) } catch (e0) {}
       let cur = c4CoreOfSlot(server, slot)
-      if (!cur) { c4WarpEnd(server, slot, label, job); return }
+      if (!cur) {
+        c4TellTeam(server, slot, c4t('cw.warp.abort'))
+        c4WarpEnd(server, slot, label, job)
+        return
+      }
 
       // 主世界 6 扇门丢失（之前某次失败/区块卸载导致）→ 先补建 6 扇再继续，别直接判失败
       let have = 0
@@ -1392,6 +1387,7 @@ function c4WarpBody(server, job) {
       try { rev = c4CountPortals(server, d.dim, dx, dy, dz, 40) } catch (e) {}
       if (n < 6 || rev === 0) {
         console.warn('[C4] 跃迁校验失败：正向=' + n + ' 反向=' + rev + ' → 回滚到私有笼子')
+        c4TellTeam(server, slot, c4t('cw.warp.abort'))   // 失败才在聊天框说话
         try { c4RestoreHome(server, slot, idName) } catch (e2) {}
         c4WarpEnd(server, slot, label, job)
         return
@@ -1401,6 +1397,7 @@ function c4WarpBody(server, job) {
       server.scheduleInTicks(10, () => c4WarpEnd(server, slot, label, job))
     } catch (e) {
       console.warn('[C4] 自主跃迁失败: ' + e)
+      c4TellTeam(server, slot, c4t('cw.warp.abort'))
       try { c4RestoreHome(server, slot, idName) } catch (e2) {}
       c4WarpEnd(server, slot, label, job)
     }
@@ -1437,11 +1434,11 @@ function c4RestoreHome(server, slot, idName) {
 }
 
 function c4WarpEnd(server, slot, label, job) {
-  // 立刻把按钮/界面弹回来：失败时不必等数据包 215 tick 的收尾
+  // 动画/跃迁彻底结束才把按钮、界面弹回来（按下期间按钮一直是 pressed，右键不会再触发）
   try {
     let bx = c4CubeX(slot)
-    server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run setblock ~ ~-7 ~7 kubejs:launch_button[facing=north]`)
-    server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run setblock ~1 ~-7 ~8 kubejs:warping_interface`)
+    server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run setblock ~ ~-7 ~${c4SlotZ(slot) - 1} kubejs:launch_button[facing=north]`)
+    server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run setblock ~1 ~-7 ~${c4SlotZ(slot)} kubejs:warping_interface`)
   } catch (e) {}
   // 清掉数据包残留的"正在前往维度"actionbar 状态（否则聊天框/动作条会一直显示"维度:"）
   try {
@@ -1489,9 +1486,7 @@ function c4WarpEnd(server, slot, label, job) {
   } catch (e) { console.warn('[C4] 落点记录失败: ' + e) }
 
   C4_BUSY = null
-  let sd = (job && job.seed !== undefined && job.seed !== null) ? job.seed : '?'
-  c4TellTeam(server, slot, c4t2('cw.warp.done', label, sd))
-  if (C4_Q.length > 0) c4TellTeam(server, slot, c4t1('cw.warp.queue_left', C4_Q.length))
+  // 成功路径不往聊天框发任何东西（倒计时/排队都在动作条），失败提示已在各自分支发出
   c4Pump(server)
 }
 
@@ -1512,6 +1507,12 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
   }
 
   if (slot === 0) { c4Lobby(server, clicker); return }
+
+  // 正在跃迁/已在队列里：直接忽略这次右键（静默，不刷聊天框）
+  if (c4SlotInFlight(slot)) {
+    c4BtnLog(false, clicker, slot, '该基地正在跃迁/排队中，忽略重复按下')
+    return
+  }
 
   let info = c4TeamOfSlot(slot)
   if (!info) {
@@ -1547,7 +1548,22 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
   }
 
   c4BtnLog(true, clicker, slot, '')
-  clicker.tell(c4t1('cw.button.queued', C4_Q.length + (C4_BUSY ? 1 : 0)))
+  // 按键音放在"进队列"之前：按下瞬间就播（排队时也能立刻听到反馈，不等到轮到自己）
+  try {
+    let cx = c4CubeX(slot)
+    let at = `execute in minecraft:overworld positioned ${cx} ${C4_CORE_Y} ${C4_Z} run `
+    let atBeep = `execute in minecraft:overworld positioned ${cx} ${C4_CORE_Y - 4} ${C4_Z + 4} run `
+    server.runCommandSilent(at + 'playsound block.bamboo_wood_button.click_on master @a ~ ~ ~ 0 1')
+    server.runCommandSilent(at + 'playsound mekanism:tile.machine.antiprotonic_nucleosynthesizer master @a ~ ~ ~ 1 0')
+    server.runCommandSilent(atBeep + 'playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 0')
+    server.runCommandSilent(atBeep + 'playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 0')
+  } catch (e) {}
+  // 按下即锁：按钮保持 launch_button_pressed，直到整套动画/跃迁结束由 c4WarpEnd 复位；
+  // 期间方块已不是 launch_button，右键事件根本不会再进来（c4SlotInFlight 只是双保险）。
+  try {
+    let cx = c4CubeX(slot)
+    server.runCommandSilent(`execute in minecraft:overworld positioned ${cx} ${C4_CORE_Y} ${C4_Z} run setblock ~ ~-7 ~${c4SlotZ(slot) - 1} kubejs:launch_button_pressed`)
+  } catch (e) {}
   c4Enqueue(server, slot, info.key, c4Name(clicker))
 })
 
@@ -2024,6 +2040,21 @@ function c4SelfTest(server) {
   try { cores = c4Cores(server) } catch (e) {}
   if (cores.length === 0) return
   cores.forEach(c => step('seed(slot' + c.slot + ')', () => c4ReadSeed(server, c.slot)))
+  // 动作条文本（无排队 / 有排队）；临时压两个假 job 只为取样，同步取完立即还原
+  step('动作条(无排队)', () => c4TravelText({ seedShown: 7 }))
+  step('动作条(有排队)', () => {
+    let base = C4_Q.length
+    C4_Q.push({ slot: -101 }, { slot: -102 })
+    let s = c4TravelText({ seedShown: 7 })
+    C4_Q.length = base
+    return s
+  })
+  step('按钮锁', () => {
+    C4_Q.push({ slot: -103 })
+    let a = c4SlotInFlight(-103)
+    C4_Q.pop()
+    return '自锁=' + a + ' 空槽=' + c4SlotInFlight(-104)
+  })
   let c0 = cores[0]
   step('core0', () => 'slot' + c0.slot + ' dim=' + c4DimOf(c0.entity) + ' @' + Math.round(c0.x))
   step('slot' + c0.slot + '门数量', () => c4PortalsNear(server, c0.x, c0.y, c0.z).length)
@@ -2435,3 +2466,48 @@ PlayerEvents.loggedIn(event => {
     })
   } catch (e) {}
 })
+
+// ---------------------------------------------------------------------------- 启动复位
+// 按钮现在从"按下"一直保持到动画结束；如果期间崩服/重载，世界里的 pressed 状态会残留。
+// 服务端加载（含 /reload）时把各台车厢的按钮复位成普通态（只改确实处于 pressed 的那一格）。
+// 优先用登记表里的 slot（加载早期实体可能还没进内存），再补上能枚举到的核心。
+function c4RestoreButtons(server) {
+  let slots = []
+  try {
+    let db = c4Db()
+    for (let k in db.cubes) if (db.cubes[k]) {
+      let s = Number(db.cubes[k].slot)
+      if (slots.indexOf(s) < 0) slots.push(s)
+    }
+  } catch (e) {}
+  try {
+    c4Cores(server).forEach(c => {
+      let s = Number(c.slot)
+      if (slots.indexOf(s) < 0) slots.push(s)
+    })
+  } catch (e) {}
+  let n = 0
+  slots.forEach(slot => {
+    let x = Math.floor(c4CubeX(slot))
+    let y = Math.floor(C4_CORE_Y - 7)
+    let z = c4SlotZ(slot) - 1
+    try {
+      server.runCommandSilent('execute in minecraft:overworld if block ' + x + ' ' + y + ' ' + z
+        + ' kubejs:launch_button_pressed run setblock ' + x + ' ' + y + ' ' + z + ' kubejs:launch_button[facing=north]')
+      n++
+    } catch (e) {}
+  })
+  return n
+}
+// 脚本加载后的第一个 tick 复位一次（/reload 不会触发 ServerEvents.loaded，但一定会重新跑脚本）
+let C4_BTN_RESTORED = false
+ServerEvents.tick(event => {
+  if (C4_BTN_RESTORED) return
+  C4_BTN_RESTORED = true
+  try {
+    let n = c4RestoreButtons(event.server)
+    console.info('[C4] 启动复位：检查 ' + n + ' 台车厢的按钮状态')
+  } catch (e) { console.warn('[C4] 启动复位异常: ' + e) }
+})
+
+// 聊天框只在失败时说话（见 c4WarpBody / perform 的 abort 分支）
