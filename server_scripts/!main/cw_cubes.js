@@ -4650,8 +4650,8 @@ function c4DoReduce(server, cube, face, player) {
 }
 
 // 3×3 连接洞激活：基地洞 ↔ 传送器洞，各一扇「从上方跳下」的单向水平门
-//   基地洞   (bas.x+0.5, bas.y+0.45, bas.z+0.5) → 传送器天花板下 (telTop-1.5)
-//   传送器洞 (tel.x+0.5, tel.y+0.45, tel.z+0.5) → 基地天花板下   (basTop-1.5)
+//   基地洞   (bas.x+0.5, bas.y+0.80, bas.z+0.5) → 传送器天花板下 (telTop-1.5)
+//   传送器洞 (tel.x+0.5, tel.y+0.80, tel.z+0.5) → 基地天花板下   (basTop-1.5)
 // cb_make_portal 直接生成、不建反向门 = 单向；重复激活先杀旧门再建（幂等）。
 function c4ActivateHole(server, slot, player) {
   try {
@@ -4688,9 +4688,9 @@ function c4ActivateHole(server, slot, player) {
       })
     })
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
-    // 门面比地板低 0.55 格（原来是 0.05）——站在洞口边缘不会一迈步就被吞，要真掉下去才过门
-    let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.45, z: bz }, 3, 90)
-    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.45, z: tz }, 3, 90)
+    // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
+    let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.80, z: bz }, 3, 90)
+    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.80, z: tz }, 3, 90)
     let aim = (e, tag, dx, dy, dz) => {
       if (!e) return false
       try {
@@ -4705,8 +4705,8 @@ function c4ActivateHole(server, slot, player) {
     let okA = aim(A, 'cw_link_down', tx, telTop - 1.5, tz)   // 基地 → 传送器天花板下
     let okB = aim(B, 'cw_link_up', bx, basTop - 1.5, bz)     // 传送器 → 基地天花板下
     console.info('[C4] 3×3 洞 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.45) + ',' + bz + '→' + tx + ',' + (telTop - 1.5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.45) + ',' + tz + '→' + bx + ',' + (basTop - 1.5) + ',' + bz + (okB ? ' OK' : ' 失败'))
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + '→' + tx + ',' + (telTop - 1.5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.80) + ',' + tz + '→' + bx + ',' + (basTop - 1.5) + ',' + bz + (okB ? ' OK' : ' 失败'))
     try { c4BarTeam(server, slot, '3×3 洞已连通：跳进洞里可往返基地 / 传送器') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
