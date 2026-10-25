@@ -2497,6 +2497,17 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
         })))))
 
 
+  // 整舱搬迁：/cube admin relocate <slot> <x> <y(按钮)> <z>
+  root.then(cmdRoot.literal('relocate').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0))
+      .then(cmdRoot.argument('x', IAT.integer(-30000000, 30000000))
+        .then(cmdRoot.argument('y', IAT.integer(-30000000, 30000000))
+          .then(cmdRoot.argument('z', IAT.integer(-30000000, 30000000)).executes(ctx => {
+            c4CmdRelocate(ctx, IAT.getInteger(ctx, 'slot'), IAT.getInteger(ctx, 'x'),
+              IAT.getInteger(ctx, 'y'), IAT.getInteger(ctx, 'z'))
+            return 1
+          }))))))
+
   // 临时解锁：/cube admin ext reset <slot> —— ext 清零并按 17³ 重建舱体+6 门
   root.then(cmdRoot.literal('ext').requires(src => src.hasPermission(4))
     .then(cmdRoot.literal('reset')
@@ -2594,6 +2605,181 @@ function c4CmdHomeSlot(ctx, slot) {
   let s = c4Seat(slot, 0, 1)
   if (c4Tp(ctx.source.server, p, 'minecraft:overworld', s.x, s.y, s.z)) c4ReplyT(ctx, 'cw.cmd.tp_ok', [])
   else c4ReplyT(ctx, 'cw.cmd.tp_fail')
+}
+
+// —— flag=2（UPDATE_CLIENTS）逐块放置：不触发邻接更新，海底砌壳/清内不会倒灌 ——
+let C4_BPCls = null
+let C4_RLCls = null
+let C4_BIRCls = null
+function c4Flag2State(id) {
+  try {
+    if (!C4_BIRCls) C4_BIRCls = Java.loadClass('net.minecraft.core.registries.BuiltInRegistries')
+    if (!C4_RLCls) C4_RLCls = Java.loadClass('net.minecraft.resources.ResourceLocation')
+    let bl = C4_BIRCls.BLOCK.get(new C4_RLCls(String(id)))
+    if (!bl) return null
+    let real = String(bl.id || '')
+    if (real && real !== String(id)) {
+      console.warn('[C4] flag2 解析 ' + id + ' 实际得到 ' + real + ' → 退回命令放置')
+      return null
+    }
+    return bl.defaultBlockState()
+  } catch (e) { console.warn('[C4] flag2 解析异常 ' + id + ': ' + e); return null }
+}
+function c4Flag2Place(lv, x, y, z, state) {
+  try {
+    if (!C4_BPCls) C4_BPCls = Java.loadClass('net.minecraft.core.BlockPos')
+    return lv.setBlock(new C4_BPCls(x | 0, y | 0, z | 0), state, 2) ? 1 : 0
+  } catch (e) { return 0 }
+}
+function c4Flag2One(lv, x, y, z, id) {
+  let st = c4Flag2State(id)
+  if (!st) return 0
+  return c4Flag2Place(lv, x, y, z, st)
+}
+// 用 flag=2 填一个 box（逐块）；返回实际放置数
+function c4Flag2Fill(lv, x0, y0, z0, x1, y1, z1, id) {
+  let st = c4Flag2State(id)
+  if (!st) {
+    // 兜底：拿不到状态就退回命令（区块已加载，命令能正常放置）
+    let n = 0
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++)
+        for (let z = z0; z <= z1; z++) {
+          try { lv.server.runCommandSilent('execute in ' + lv.dimension().location() + ' run setblock ' + x + ' ' + y + ' ' + z + ' ' + id); n++ } catch (e) {}
+        }
+    console.warn('[C4] flag2 退回命令放置 ' + id + '：' + n + ' 块')
+    return n
+  }
+  let n = 0
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++)
+      for (let z = z0; z <= z1; z++) n += c4Flag2Place(lv, x, y, z, st)
+  return n
+}
+
+// flag2 放置房间内部（地板留 3×3 洞、顶圈、四角、家具、光源）；不碰外壳
+function c4PlaceRoomFlag2(lv, b, btn) {
+  if (!lv) return
+  let FX = Math.floor(b.X0 + 8), FZ = Math.floor(b.Z0 + 8)
+  c4Flag2Fill(lv, b.X0, b.Y0, b.Z0, b.X1, b.Y0, b.Z1, 'kubejs:warping_frame_platform')
+  c4Flag2Fill(lv, FX - 1, b.Y0, FZ - 1, FX + 1, b.Y0, FZ + 1, 'minecraft:air')
+  c4Flag2Fill(lv, b.X0, b.Y1, b.Z0, b.X1, b.Y1, b.Z0, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X0, b.Y1, b.Z1, b.X1, b.Y1, b.Z1, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X0, b.Y1, b.Z0, b.X0, b.Y1, b.Z1, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X1, b.Y1, b.Z0, b.X1, b.Y1, b.Z1, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X0, b.Y0, b.Z0, b.X0, b.Y1, b.Z0, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X1, b.Y0, b.Z1, b.X1, b.Y1, b.Z1, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X0, b.Y0, b.Z1, b.X0, b.Y1, b.Z1, 'kubejs:warping_frame')
+  c4Flag2Fill(lv, b.X1, b.Y0, b.Z0, b.X1, b.Y1, b.Z0, 'kubejs:warping_frame')
+  c4Flag2One(lv, btn.x, btn.y, btn.z + 1, 'kubejs:warping_controls')
+  c4Flag2One(lv, btn.x + 1, btn.y, btn.z + 1, 'kubejs:warping_interface')
+  c4Flag2One(lv, btn.x - 1, btn.y, btn.z + 1, 'kubejs:warping_disc_drive')
+  c4Flag2One(lv, btn.x, btn.y, btn.z, 'kubejs:launch_button')
+  c4Flag2One(lv, FX, b.Y0 + 8, FZ, 'minecraft:light')
+}
+
+// 整舱搬迁：先砌封闭外壳 → 清内腔 → 补上下 2 层空气 → 建地板/家具/门 → 清旧锚点
+function c4Relocate(server, slot, bx2, by2, bz2) {
+  let info = c4TeamOfSlot(slot)
+  if (!info || !info.cube) { console.warn('[C4] relocate：槽位 ' + slot + ' 没有登记'); return }
+  let cubeId = info.cube.id || ('cube' + slot)
+  let ext = c4Ext(info.cube)
+  let oldBtn = c4BtnPos(slot)
+  // 核心由新按钮派生（按钮在 +z 内壁、地板上一格）
+  let cx = bx2 + 0.5, cy = by2 + 7.5, cz = bz2 - 6.5
+  let b = c4RoomBox(cx, cy, cz, ext)
+  let dim = 'minecraft:overworld'
+  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dim + ' run ' + cmd) } catch (e) { console.warn('[C4] relocate: ' + e) } }
+  console.info('[C4] relocate slot=' + slot + ' 旧btn=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
+    + ' 新btn=' + bx2 + ',' + by2 + ',' + bz2 + ' box=' + b.X0 + '..' + b.X1 + '/' + b.Y0 + '..' + b.Y1 + '/' + b.Z0 + '..' + b.Z1)
+  // ⓪ 先 forceload 目标范围（整数）
+  try { server.runCommandSilent('execute in ' + dim + ' run forceload add ' + (b.X0 - 32) + ' ' + (b.Z0 - 32) + ' ' + (b.X1 + 32) + ' ' + (b.Z1 + 32)) } catch (e0) {}
+  // ① flag=2 逐块：把 box 外 2 层整体砌成 frame（实体密封壳），不触发更新、水进不来
+  let t0 = Date.now()
+  let lvOw = c4OwLevel(server)
+  if (!lvOw) lvOw = c4Level(server, dim)
+  let shellN = 0
+  if (lvOw) shellN = c4Flag2Fill(lvOw, b.X0 - 2, b.Y0 - 2, b.Z0 - 2, b.X1 + 2, b.Y1 + 2, b.Z1 + 2, 'kubejs:warping_frame')
+  // ② 再把内部（含 ±1 一圈）清成 air（同样 flag=2，不流水）
+  let airN = 0
+  if (lvOw) airN = c4Flag2Fill(lvOw, b.X0 - 1, b.Y0 - 1, b.Z0 - 1, b.X1 + 1, b.Y1 + 1, b.Z1 + 1, 'minecraft:air')
+  console.info('[C4] setBlock flag=2 放壳=' + shellN + ' 块 清内=' + airN + ' 块 用时=' + (Date.now() - t0) + 'ms')
+  // ③ 顶部之上 / 底部之下各 2 层空气（在密封壳之外，给门留空间）
+  if (lvOw) { c4Flag2Fill(lvOw, b.X0 - 2, b.Y1 + 3, b.Z0 - 2, b.X1 + 2, b.Y1 + 4, b.Z1 + 2, 'minecraft:air'); c4Flag2Fill(lvOw, b.X0 - 2, b.Y0 - 4, b.Z0 - 2, b.X1 + 2, b.Y0 - 3, b.Z1 + 2, 'minecraft:air') }
+  // ④ 内腔用 flag=2 直接建（地板/洞口/顶圈/四角/家具/光源）
+  try { c4PlaceRoomFlag2(lvOw, b, { x: bx2, y: by2, z: bz2 }) } catch (e2) { console.warn('[C4] relocate 建房失败: ' + e2) }
+  // ⑤ 清旧锚点：旧 6 门 + 旧按钮/操控台/接口/唱片机（旧房间壳保留）
+  let killed = 0
+  try {
+    c4All(server).forEach(e => {
+      try {
+        if (!c4IsPortal(e)) return
+        if (c4DimOf(e) !== dim) return
+        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link')) return
+        if (!(c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot))) return
+        e.discard(); killed++
+      } catch (err) {}
+    })
+  } catch (e3) {}
+  // 只有新旧锚点不同才清旧家具（同一位置时不能把刚放好的擦掉）
+  try {
+    let same = (oldBtn.x === bx2 && oldBtn.y === by2 && oldBtn.z === bz2)
+    if (!same) {
+      server.runCommandSilent('execute in ' + dim + ' run setblock ' + oldBtn.x + ' ' + oldBtn.y + ' ' + oldBtn.z + ' minecraft:air')
+      server.runCommandSilent('execute in ' + dim + ' run setblock ' + oldBtn.x + ' ' + oldBtn.y + ' ' + (oldBtn.z + 1) + ' minecraft:air')
+      server.runCommandSilent('execute in ' + dim + ' run setblock ' + (oldBtn.x + 1) + ' ' + oldBtn.y + ' ' + (oldBtn.z + 1) + ' minecraft:air')
+      server.runCommandSilent('execute in ' + dim + ' run setblock ' + (oldBtn.x - 1) + ' ' + oldBtn.y + ' ' + (oldBtn.z + 1) + ' minecraft:air')
+    }
+  } catch (e4) {}
+  // ⑥ 写锚点 + 在新位置建 6 门并指固定目的地
+  info.cube.btn = { x: bx2, y: by2, z: bz2 }
+  c4Save()
+  let tp = { x: cx, y: cy, z: cz }
+  let made = 0
+  try { made = c4MakeRoomPortals(server, slot, cubeId, ext, tp) } catch (e5) { console.warn('[C4] relocate 建门失败: ' + e5) }
+  let seed = 0
+  try { seed = c4ReadSeed(server, slot) } catch (e6) { seed = 0 }
+  let dest = c4DestOf(info.cube, C4_SEED_DIMS[seed] || C4_SEED_DIMS[0])
+  try {
+    if (dest) {
+      c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(dest.dim), dest.x + 0.5, dest.y + 0.5, dest.z + 0.5,
+        false, dest.dim, cubeId, ext, false, slot)
+    } else {
+      c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey('hexahedron:bedrock_bottom'), tp.x, tp.y, tp.z,
+        false, 'hexahedron:bedrock_bottom', cubeId, ext, false, slot)
+    }
+  } catch (e7) {}
+  // 门洞清理会把 down/up 面整层 17×17 清掉（含地板/操控台/按钮）→ 建完门后立刻补回来
+  try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e9) {}
+  server.scheduleInTicks(20, () => {
+    try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e8) {}
+    try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e10) {}
+  })
+  console.info('[C4] relocate 完成 slot=' + slot + ' 旧=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
+    + ' → 新=' + bx2 + ',' + by2 + ',' + bz2 + ' 门=' + made + ' 旧门清=' + killed)
+}
+
+function c4CmdRelocate(ctx, slot, x, y, z) {
+  let server = ctx.source.server
+  let info = c4TeamOfSlot(slot)
+  if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+  let lv = c4Level(server, 'minecraft:overworld')
+  let minY = -64, maxY = 320
+  try { if (lv) { minY = Number(lv.getMinBuildHeight()); maxY = Number(lv.getMaxBuildHeight()) } } catch (e0) {}
+  let by2 = Math.floor(Number(y))
+  let ext = c4Ext(info.cube)
+  if (by2 - 4 < minY || by2 + 18 + 16 * ext.py > maxY - 1) { c4Reply(ctx, 'y 不合法（含扩展高度）：' + minY + '..' + maxY); return }
+  let bx3 = Math.floor(Number(x)), bz3 = Math.floor(Number(z))
+  // 先同步 forceload 目标区，20t 后再真正搬迁（等区块加载完成，flag=2 setBlock 才写得进去）
+  try {
+    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (bx3 - 48) + ' ' + (bz3 - 48) + ' ' + (bx3 + 48) + ' ' + (bz3 + 48))
+  } catch (eF) {}
+  let g = C4_GEN
+  server.scheduleInTicks(20, () => {
+    if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（relocate）'); return }
+    c4Relocate(server, slot, bx3, by2, bz3)
+  })
+  c4Reply(ctx, 'relocate 已排队：slot=' + slot + ' → btn=' + bx3 + ',' + by2 + ',' + bz3 + '（20t 后执行）')
 }
 
 function c4CmdExtReset(ctx, slot) {
