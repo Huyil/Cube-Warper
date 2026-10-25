@@ -40,8 +40,8 @@ const C4_TELE_TOP = C4_TELE_FLOOR + 17  // 天花板平面 27.0
 const C4_BASE_FLOOR = 97          // 基地默认底面 y（C4_CORE_Y - 8.5）
 // 门面：原包就是「17×17、平面在开口外 0.01」。之前改成 16.98/内缩 0.06 后，
 // 门面比开口小一圈又退进去 0.06，站在立方体里能沿门框看到一条 1px 的外部像素 → 现在改回贴平面。
-const C4_FACE = 8.51              // 核心到门面（原包 cb_make_portal 实测值，开口外 0.01）
-const C4_DEST_FACE = 8.51         // 目的地平面 = 门面本身
+const C4_FACE = 8.0               // 核心到门面（= 框梁方块厚度的一半，门边被框梁包住）
+const C4_DEST_FACE = 8.0          // 目的地平面 = 门面本身
 const C4_HALF = 7.9
 // 这些范围现在指【传送器内部】
 const C4_Y_MIN = C4_TELE_Y - C4_TELE_HALF      // 10.0
@@ -3491,13 +3491,15 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
 // ext 感知的六面门面中心：一律由 c4RoomBox 推导（外壳外 0.51）
 // 每面独立偏移表（相对【按钮方块坐标】，方块中心坐标系；每级扩展 ±16）
 // 方向键：w=-x e=+x n=-z s=+z d=-y u=+y
+// 门面平面 = 框梁方块【厚度的一半】（±8.0 而不是贴外表面的 ±8.51）：
+// 面往里退半格后，门的边缘被框梁包住，从里面看不到"门边和框梁之间漏出外面"的缝。
 const C4_FACES = {
-  w: { x: -8.01, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
-  e: { x: 9.01, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
-  n: { x: 0.50, y: 7.50, z: -15.01, ext: 'nz', sign: -1 },
-  s: { x: 0.50, y: 7.50, z: 2.01, ext: 'pz', sign: 1 },
-  d: { x: 0.50, y: -1.01, z: -6.50, ext: null, sign: 0 },
-  u: { x: 0.50, y: 16.01, z: -6.50, ext: 'py', sign: 1 }
+  w: { x: -7.50, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
+  e: { x: 8.50, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
+  n: { x: 0.50, y: 7.50, z: -14.50, ext: 'nz', sign: -1 },
+  s: { x: 0.50, y: 7.50, z: 1.50, ext: 'pz', sign: 1 },
+  d: { x: 0.50, y: -0.50, z: -6.50, ext: null, sign: 0 },
+  u: { x: 0.50, y: 15.50, z: -6.50, ext: 'py', sign: 1 }
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
 const C4_FACE2DIR = { 'e': 'x', 'w': '-x', 's': 'z', 'n': '-z', 'u': 'y', 'd': '-y' }
