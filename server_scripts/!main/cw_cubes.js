@@ -1057,29 +1057,112 @@ const C4_SEED_DIMS = {
   17: 'hexahedron:forsaken_planes', 18: 'hexahedron:silver_forest', 24: 'hexahedron:the_sugarscape',
   32: 'hexahedron:the_azurewood', 36: 'hexahedron:soul_valley', 48: 'hexahedron:the_umbral_sea',
   64: 'hexahedron:carrion_485', 72: 'hexahedron:gronglegrowth', 96: 'hexahedron:lavender_fields',
-  128: 'hexahedron:alpha_islands'
+  128: 'hexahedron:alpha_islands',
+  // 原包 ticket_selection 的两个特殊分支：eye = 999.. → the_edge_of_reality，infinite = ..-999 → overworld
+  999: 'hexahedron:the_edge_of_reality',
+  '-999': 'minecraft:overworld'
 }
 
-// 读操控台上方三个插槽（相对核心 -1/0/+1, y=98, z=8）：空槽/其它方块按 +0 处理
-function c4ReadSeed(server, slot) {
-  let x0 = Math.floor(c4CubeX(slot))
+// ---------------------------------------------------------------------------- 三格插槽（原包 runtime_effects）
+// 台面（warping_controls/interface/disc_drive）在 y=98，算子方块坐在它上面一格 y=99，z=+8。
+// 原包读取/消耗顺序（pre_runtime=20/40/60）：x=+1（界面）→ x=0（控制台）→ x=-1（光盘驱动器）。
+const C4_SLOT_Y = 99
+const C4_OP_PREFIX = 'kubejs:vector_operator_'
+// 只有 #kubejs:vector 的 8 个成员会被消耗（infinite 不在标签里）；dust 是原包 runtime_effects 的粒子颜色
+const C4_VECTOR_OPS = {
+  basic:     { op: '+', v: 1,   dust: '1 1 1 3 0.514 0.514 0.514' },
+  charged:   { op: '*', v: 3,   dust: '1 0.816 0 3 0.455 0.373 0.008' },
+  fluix:     { op: '+', v: 2,   dust: '0.635 0 1 3 0.31 0 0.373' },
+  nuclear:   { op: '*', v: 4,   dust: '0.318 1 0 3 0.075 0.373 0' },
+  blaze:     { op: '*', v: 6,   dust: '1 0.451 0 3 0.706 0.224 0' },
+  lightning: { op: '*', v: 8,   dust: '0 0.969 1 3 0 0.373 0.62' },
+  eye:       { op: '=', v: 999, dust: '1 0 0 3 0.373 0 0' },
+  crimson:   { op: null, v: 0,  dust: null }   // 在标签里 → 会被消耗，但原包没有它的运算/粒子行
+}
+function c4SlotX(slot, i) { return Math.floor(c4CubeX(slot)) + i }
+// 操控台贴着 +z 内壁：基础 z=8；若立方体在 +z 方向扩过，操控台跟着 Z1 外移（每级 +16）
+function c4SlotZ(slot) {
+  let z = C4_Z + 8
+  try {
+    let h = c4TeamOfSlot(slot)
+    if (h && h.cube) z += 16 * c4Ext(h.cube).nz
+  } catch (e) {}
+  return Math.floor(z)
+}
+// 读一格插槽：返回 {id, key, op}；op 只覆盖 #kubejs:vector 的 8 个成员
+function c4OpAt(server, slot, i) {
   let lv = c4OwLevel(server)
-  if (!lv) return 0
-  let seed = 0
-  for (let i = -1; i <= 1; i++) {
-    let id = ''
-    try { id = String(lv.getBlock(x0 + i, 98, 8).id) } catch (e) { id = '' }
-    if (id === 'kubejs:vector_operator_basic') seed += 1
-    else if (id === 'kubejs:vector_operator_charged') seed *= 3
-    else if (id === 'kubejs:vector_operator_fluix') seed += 2
-    else if (id === 'kubejs:vector_operator_nuclear') seed *= 4
-    else if (id === 'kubejs:vector_operator_blaze') seed *= 6
-    else if (id === 'kubejs:vector_operator_lightning') seed *= 8
-    else if (id === 'kubejs:vector_operator_eye') seed = 999
-    else if (id === 'kubejs:vector_operator_infinite') seed = -999
-    // 空气 / 其它方块：+0，不改变 seed
+  let id = ''
+  if (lv) { try { id = String(lv.getBlock(c4SlotX(slot, i), C4_SLOT_Y, c4SlotZ(slot)).id) } catch (e) { id = '' } }
+  if (id.indexOf(C4_OP_PREFIX) !== 0) return { id: id, key: null, op: null }
+  let key = id.substring(C4_OP_PREFIX.length)
+  return { id: id, key: key, op: C4_VECTOR_OPS[key] || null }
+}
+// 原包 processor_calculation：+1 → 0 → -1 的固定顺序；infinite 直接把种子设 -999（且不消耗）
+// 原包 processor_calculation 的单格运算：把一个插槽的算子作用到种子上
+function c4ApplyOp(o, seed) {
+  if (!o) return seed
+  if (o.op) {
+    if (o.op.op === '+') return seed + o.op.v
+    if (o.op.op === '*') return seed * o.op.v
+    if (o.op.op === '=') return o.op.v
+    return seed
   }
+  if (o.key === 'infinite') return -999
   return seed
+}
+function c4ReadSeed(server, slot) {
+  let seed = 0
+  for (let i = 1; i >= -1; i--) seed = c4ApplyOp(c4OpAt(server, slot, i), seed)
+  return seed
+}
+
+// 原包 runtime_effects 的"一格插槽"：先音效，再粒子，最后 setblock empty（setblock 无 destroy → 不掉物品）。
+// 空槽 / 非 #kubejs:vector（含 infinite）走失败分支：evoker + beacon.deactivate + small_colored_dust，不 setblock。
+function c4ConsumeSlot(server, slot, i) {
+  let o = c4OpAt(server, slot, i)
+  let x = c4SlotX(slot, i)
+  // 与核心 (x+0.5, 105.5, 0.5) 同基准：~1 ~-6 ~8 = 方块中心 (x+i+0.5, 99.5, Z1+0.5)
+  let at = 'execute in minecraft:overworld positioned ' + (x + 0.5) + ' 99.5 ' + (c4SlotZ(slot) + 0.5) + ' run '
+  if (o.op) {
+    server.runCommandSilent(at + 'playsound block.end_portal_frame.fill master @a ~ ~ ~ 1 1')
+    if (o.op.dust) server.runCommandSilent(at + 'particle dust_color_transition ' + o.op.dust + ' ~ ~ ~ 0.2 0.2 0.2 0.1 10 force')
+    server.runCommandSilent(at + 'setblock ~ ~ ~ kubejs:vector_operator_empty')
+    console.info('[C4] 槽位 ' + slot + ' 消耗格子 ' + i + '：' + o.key + ' → vector_operator_empty')
+    return true
+  }
+  server.runCommandSilent(at + 'playsound minecraft:entity.evoker.cast_spell master @a ~ ~ ~ 1 2')
+  server.runCommandSilent(at + 'playsound minecraft:block.beacon.deactivate master @a ~ ~ ~ 1 2')
+  server.runCommandSilent(at + 'particle alexscaves:small_colored_dust ~ ~ ~ 0.2 0.2 0.2 10 10 force')
+  console.info('[C4] 槽位 ' + slot + ' 空格子 ' + i + '：' + (o.key || o.id || 'air') + '（不消耗）')
+  return false
+}
+
+// 动作条：原包 processors/travel_actionbar 的轮播（5/9/13/17 tick 后归零），分数取本台核心的 dimension_seed
+const C4_TRAVEL_KEYS = ['cw.actionbar.traveling_1', 'cw.actionbar.traveling_2', 'cw.actionbar.traveling_3', 'cw.actionbar.traveling_4']
+const C4_TRAVEL_TICKS = [5, 9, 13, 17]
+function c4StartTravelBar(server, slot, job, seed) {
+  try {
+    let x = Math.floor(c4CubeX(slot))
+    server.runCommandSilent('scoreboard players set @e[type=marker,tag=cw_slot' + slot + '] dimension_seed ' + seed)
+    server.runCommandSilent('execute in minecraft:overworld positioned ' + x + ' ' + C4_CORE_Y + ' ' + C4_Z + ' run tag @a[distance=..50] add travel_actionbar')
+    server.runCommandSilent('scoreboard players set @a[tag=travel_actionbar] travel_actionbar 0')
+  } catch (e) { console.warn('[C4] 动作条启动失败: ' + e) }
+  c4TravelBarTick(server, slot, job, seed, 0)
+}
+function c4TravelBarTick(server, slot, job, seed, n) {
+  if (!job || C4_BUSY !== job || n > 400) return
+  try {
+    server.runCommandSilent('scoreboard players add @a[tag=travel_actionbar] travel_actionbar 1')
+    for (let k = 0; k < C4_TRAVEL_TICKS.length; k++) {
+      // 原包用 score 组件显示 dimension_seed；这里用字面量（分数选择器必须是单实体，@e 会被解析成空）
+      let json = '["",{"translate":"' + C4_TRAVEL_KEYS[k] + '","bold":true,"color":"dark_aqua"},'
+        + '{"text":"' + seed + '","bold":true,"color":"aqua"}]'
+      server.runCommandSilent('title @a[tag=travel_actionbar,scores={travel_actionbar=' + C4_TRAVEL_TICKS[k] + '}] actionbar ' + json)
+    }
+    server.runCommandSilent('scoreboard players set @a[tag=travel_actionbar,scores={travel_actionbar=17}] travel_actionbar 0')
+  } catch (e) { console.warn('[C4] 动作条 tick 失败: ' + e) }
+  server.scheduleInTicks(1, () => c4TravelBarTick(server, slot, job, seed, n + 1))
 }
 
 // 自主跃迁：选维度（安全白名单）+ 高度图找地表（方案 A：不整平地形）
@@ -1091,6 +1174,10 @@ const C4_SAFE_DIMS = [
 function c4PickDest(server, slot) {
   let seed = 0
   try { seed = c4ReadSeed(server, slot) } catch (e) { seed = 0 }
+  return c4PickDestForSeed(server, slot, seed)
+}
+// 已经算出 seed 时用它选目的地（消耗是逐 tick 的，t=60 的最终 seed 才是权威值）
+function c4PickDestForSeed(server, slot, seed) {
   let dim = C4_SEED_DIMS[seed] || C4_SEED_DIMS[0]
   if (!C4_SEED_DIMS[seed]) console.warn('[C4] 未知 seed=' + seed + '，回退 seed 0（graveyard）')
   console.info('[C4] 槽位 ' + slot + ' 运算符 seed=' + seed + ' → ' + dim)
@@ -1225,27 +1312,60 @@ function c4WarpBody(server, job) {
   let dx = d.x + 0.5, dz = d.z + 0.5, dy = d.y + 0.5
   let fx = Math.floor(dx), fz = Math.floor(dz)
   server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
-  // 按下状态 + 提示（原包由数据包 runtime 做，这里补一个精简版）
-  try {
-    let bx = c4CubeX(slot)
-    server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run setblock ~ ~-7 ~7 kubejs:launch_button_pressed`)
-    server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run setblock ~1 ~-7 ~8 kubejs:warping_interface_running`)
-  } catch (e) {}
-  c4TellTeam(server, slot, c4t1('cw.actionbar.traveling_1', ''))
-  // 消耗三个插槽里的算子：参与完计算后变成 vector_operator_empty（带一点粒子）
-  try {
-    let x0 = Math.floor(c4CubeX(slot))
-    let lv = c4OwLevel(server)
-    for (let i = -1; i <= 1; i++) {
-      let id = ''
-      try { id = String(lv.getBlock(x0 + i, 98, 8).id) } catch (e) { id = '' }
-      if (id.indexOf('kubejs:vector_operator_') === 0 && id.indexOf('_empty') < 0) {
-        server.runCommandSilent('execute in minecraft:overworld positioned ' + (x0 + i) + ' 98 8 run setblock ~ ~ ~ kubejs:vector_operator_empty')
-        server.runCommandSilent('execute in minecraft:overworld positioned ' + (x0 + i) + ' 98 8 run particle dust_color_transition 1 1 1 5 0.78 0.78 0.78 ~ ~ ~ 0.5 0.5 0.5 0 10 force')
-        server.runCommandSilent('execute in minecraft:overworld positioned ' + (x0 + i) + ' 98 8 run playsound minecraft:block.amethyst_block.chime master @a ~ ~ ~ 0.6 1.4')
-      }
+  // 剧场版时间轴（对齐原包 processors/runtime）：t=1 按下动画，t=20/40/60 逐格结算+消耗，
+  // t=60 起动作条，t=80 粒子爆发后进入自主跃迁。
+  let bx = c4CubeX(slot)
+  let atCore = `execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run `
+  let atBeep = `execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y - 4} ${C4_Z + 4} run `
+  server.scheduleInTicks(1, () => {
+    if (C4_BUSY !== job) return
+    try {
+      // 原包 runtime.mcfunction:14-17 的四连音
+      server.runCommandSilent(atCore + 'playsound block.bamboo_wood_button.click_on master @a ~ ~ ~ 0 1')
+      server.runCommandSilent(atCore + 'playsound mekanism:tile.machine.antiprotonic_nucleosynthesizer master @a ~ ~ ~ 1 0')
+      server.runCommandSilent(atBeep + 'playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 0')
+      server.runCommandSilent(atBeep + 'playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 0')
+      server.runCommandSilent(atCore + 'setblock ~ ~-7 ~7 kubejs:launch_button_pressed')
+      server.runCommandSilent(atCore + 'setblock ~1 ~-7 ~8 kubejs:warping_interface_running')
+    } catch (e) { console.warn('[C4] 按下动画失败: ' + e) }
+  })
+  // 原包 runtime.mcfunction:21-23：+1 → 0 → -1，每格 1 秒；种子按消耗顺序逐格累加
+  // （原包就是"读一格 → 结算 → 消耗"，倒计时期间被放进去的算子也会被算上）
+  let seedAcc = 0
+  server.scheduleInTicks(20, () => {
+    if (C4_BUSY !== job) return
+    try {
+      seedAcc = c4ApplyOp(c4OpAt(server, slot, 1), seedAcc)
+      c4ConsumeSlot(server, slot, 1)
+    } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+  })
+  server.scheduleInTicks(40, () => {
+    if (C4_BUSY !== job) return
+    try {
+      seedAcc = c4ApplyOp(c4OpAt(server, slot, 0), seedAcc)
+      c4ConsumeSlot(server, slot, 0)
+    } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+  })
+  server.scheduleInTicks(60, () => {
+    if (C4_BUSY !== job) return
+    try {
+      seedAcc = c4ApplyOp(c4OpAt(server, slot, -1), seedAcc)
+      c4ConsumeSlot(server, slot, -1)
+    } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+    // 倒计时期间插槽可能被改动：以 t=60 的最终 seed 为准，重选目的地（原包 t=85 才选维度）
+    if (seedAcc !== d.seed) {
+      console.warn('[C4] 槽位 ' + slot + ' 倒计时期间插槽被改动：seed ' + d.seed + ' → ' + seedAcc + '，按新 seed 重选目的地')
+      try {
+        d = c4PickDestForSeed(server, slot, seedAcc)
+        dx = d.x + 0.5; dz = d.z + 0.5; dy = d.y + 0.5
+        fx = Math.floor(dx); fz = Math.floor(dz)
+        server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
+        console.info('[C4] 槽位 ' + slot + ' 最终目的地 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+      } catch (e) { console.warn('[C4] 重选目的地失败: ' + e) }
     }
-  } catch (e) { console.warn('[C4] 消耗算子失败: ' + e) }
+    c4StartTravelBar(server, slot, job, seedAcc)   // 原包 t=60：50 格内玩家加 travel_actionbar
+  })
+  console.info('[C4] 槽位 ' + slot + ' 剧场版时间轴：t=1 按下 / t=20,40,60 消耗 / t=80 跃迁（seed=' + d.seed + '）')
   console.info('[C4] 槽位 ' + slot + ' 自主跃迁 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
 
   let perform = (phase) => {
@@ -1285,17 +1405,8 @@ function c4WarpBody(server, job) {
       c4WarpEnd(server, slot, label, job)
     }
   }
-  // 4 秒倒计时（原包 runtime 的剧场版）：每 20 tick 一次提示音 + 动作条
-  for (let i = 0; i < 4; i++) {
-    server.scheduleInTicks(i * 20, () => {
-      try {
-        let bx = c4CubeX(slot)
-        server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run playsound block.bamboo_wood_button.click_on master @a ~ ~ ~ 1 1`)
-        server.runCommandSilent(`execute in minecraft:overworld positioned ${bx} ${C4_CORE_Y} ${C4_Z} run playsound mekanism:gui.digital_beep master @a ~ ~ ~ 1 1`)
-        c4TellTeam(server, slot, c4t1('cw.actionbar.traveling_' + (i + 1), ''))
-      } catch (e) {}
-    })
-  }
+  // 倒计时已改为原包时间轴（t=1 按下音 / t=20,40,60 逐格消耗 / t=60 起动作条），
+  // 这里只剩 t=80 的跃迁瞬间：粒子爆发 + 传送音，然后进入自主跃迁。
   server.scheduleInTicks(80, () => {
     try {
       let bx = c4CubeX(slot)
@@ -1912,6 +2023,7 @@ function c4SelfTest(server) {
   let cores = []
   try { cores = c4Cores(server) } catch (e) {}
   if (cores.length === 0) return
+  cores.forEach(c => step('seed(slot' + c.slot + ')', () => c4ReadSeed(server, c.slot)))
   let c0 = cores[0]
   step('core0', () => 'slot' + c0.slot + ' dim=' + c4DimOf(c0.entity) + ' @' + Math.round(c0.x))
   step('slot' + c0.slot + '门数量', () => c4PortalsNear(server, c0.x, c0.y, c0.z).length)
