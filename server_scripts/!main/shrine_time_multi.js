@@ -1,20 +1,25 @@
 // 时间祭坛（hexahedron:shrine_time）—— KubeJS 多祭坛并行版
 //
-// 触发：右键祭坛上的石按钮。
+// 触发（脉冲语义：一次脉冲 = 一次合成）：
+//   1) 红石：kubejs:altar_signal 收到一次充能（上升沿）→ 当场全量扫一次找材料，
+//      找到就建一个 job，找不到就安静返回。通电常开不会反复合成，也不做任何轮询。
+//   2) 手动：右键 altar_signal；旧存档里的石按钮仍然可用。
+//   材料输入方式保留“放置方块”：发射器 / deployer / 机械臂放一块料 + 给一次脉冲即可。
+//
 // 状态：按“祭坛输入方块坐标 + 维度”分别保存，每个祭坛独立倒计时，
 //       不再使用全局的 clocking 标签 / time 计分板，所以多个祭坛可以同时运行。
 //
 // 注意：hexahedron:machines/shrine_time 已改为空函数，
 //       防止原命令方块和这里同时结算、造成双倍产出。
 
-const SHRINE_INPUTS = [
+var SHRINE_INPUTS = [
   'kubejs:vector_operator_empty',
   'minecraft:iron_block',
   'minecraft:emerald_block',
   'kubejs:vector_operator_step2'
 ]
 
-const SHRINE_RECIPES = [
+var SHRINE_RECIPES = [
   {
     input: 'kubejs:vector_operator_empty',
     output: 'kubejs:vector_operator_basic',
@@ -35,21 +40,21 @@ const SHRINE_RECIPES = [
   }
 ]
 
-// key -> { dim, x, y, z, left }
-const SHRINE_JOBS = {}
+// 进行中的合成：key(dim|材料坐标) -> { dim, x, y, z, left }
+var SHRINE_JOBS = {}
 
 function shrineDimension (level) {
   // 兼容 KubeJS 的 level.dimension（字符串）与原生 ResourceKey
-  const d = level.dimension
+  var d = level.dimension
   if (typeof d === 'string') return d
   try {
     if (d && d.location) {
-      const loc = (typeof d.location === 'function') ? d.location() : d.location
+      var loc = (typeof d.location === 'function') ? d.location() : d.location
       return String(loc)
     }
   } catch (e) {}
-  const s = String(d)
-  const slash = s.indexOf('/ ')
+  var s = String(d)
+  var slash = s.indexOf('/ ')
   if (slash >= 0) return s.substring(slash + 2).replace(/\]$/, '')
   return s
 }
@@ -58,15 +63,17 @@ function shrineKey (dim, pos) {
   return dim + '|' + pos.x + ',' + pos.y + ',' + pos.z
 }
 
-// 在按钮周围找“眼柱正上方放着祭坛材料”的那个方块
-function findShrineInput (button) {
-  for (let dy = -2; dy <= 4; dy++) {
-    for (let dx = -9; dx <= 9; dx++) {
-      for (let dz = -9; dz <= 9; dz++) {
-        const b = button.offset(dx, dy, dz)
-        if (!b || b.id !== 'kubejs:eye_pillar') continue
-        const above = b.offset(0, 1, 0)
-        if (above && SHRINE_INPUTS.indexOf(above.id) >= 0) return above
+// 在信号块周围找“眼柱正上方放着祭坛材料”的那个方块；没有就返回 null。
+// 只认 SHRINE_INPUTS 里的方块，所以不会把眼柱柱身中间的空格当成材料位。
+function findShrineInput (anchor) {
+  for (var dy = -2; dy <= 4; dy++) {
+    for (var dx = -9; dx <= 9; dx++) {
+      for (var dz = -9; dz <= 9; dz++) {
+        var b = anchor.offset(dx, dy, dz)
+        if (!b || String(b.id) !== 'kubejs:eye_pillar') continue
+        var above = b.offset(0, 1, 0)
+        if (!above) continue
+        if (SHRINE_INPUTS.indexOf(String(above.id)) >= 0) return above
       }
     }
   }
@@ -79,7 +86,7 @@ function shrineAt (job) {
 }
 
 function shrineSecond (server, job, second) {
-  const at = shrineAt(job)
+  var at = shrineAt(job)
   server.runCommandSilent(at + ' playsound supplementaries:block.clock.tick_1 master @a ~ ~ ~ 1 0')
   server.runCommandSilent(at + ' particle minecraft:enchant ~ ~1 ~ 3 3 3 0 10 force')
   if (second === 1) {
@@ -88,11 +95,11 @@ function shrineSecond (server, job, second) {
 }
 
 function shrineFinish (server, job) {
-  const at = shrineAt(job)
+  var at = shrineAt(job)
 
-  for (let i = 0; i < SHRINE_RECIPES.length; i++) {
-    const r = SHRINE_RECIPES[i]
-    const ok = server.runCommandSilent(
+  for (var i = 0; i < SHRINE_RECIPES.length; i++) {
+    var r = SHRINE_RECIPES[i]
+    var ok = server.runCommandSilent(
       at + ' if block ~ ~ ~ ' + r.input +
       ' run summon item ~ ~ ~ {Motion:' + r.motion +
       ',Item:{id:"' + r.output + '",Count:1b}}'
@@ -114,49 +121,72 @@ function shrineFinish (server, job) {
   server.runCommandSilent(at + ' particle minecraft:flash ~ ~ ~ 0 0 0 0 1 force')
 }
 
-BlockEvents.rightClicked('minecraft:stone_button', event => {
-  // 只处理主手，避免副手重复触发
-  if (String(event.hand) !== 'MAIN_HAND') return
-
-  const input = findShrineInput(event.block)
-  if (!input) return
-
-  const dim = shrineDimension(event.level)
-  const key = shrineKey(dim, input)
+// ---- 启动一次合成（三个触发入口共用）----
+function shrineStartAt (server, dim, pos, player) {
+  var key = shrineKey(dim, pos)
 
   if (SHRINE_JOBS[key]) {
-    event.cancel()
-    event.player.tell(Text.translatable('cw.shrine.busy'))
-    return
+    if (player) player.tell(Text.translatable('cw.shrine.busy'))
+    return false
   }
-
-  // 取消按钮交互，避免结构里的命令方块再走一遍旧逻辑（双倍结算）
-  event.cancel()
 
   SHRINE_JOBS[key] = {
     dim: dim,
-    x: input.x,
-    y: input.y,
-    z: input.z,
+    x: pos.x,
+    y: pos.y,
+    z: pos.z,
     left: 60
   }
 
   // 因为取消了按钮交互，这里补一个按钮音效
-  event.server.runCommandSilent(
-    'execute in ' + dim + ' positioned ' + (input.x + 0.5) + ' ' + (input.y + 0.5) + ' ' + (input.z + 0.5) +
+  server.runCommandSilent(
+    'execute in ' + dim + ' positioned ' + (pos.x + 0.5) + ' ' + (pos.y + 0.5) + ' ' + (pos.z + 0.5) +
     ' playsound minecraft:block.stone_button.click_on master @a ~ ~ ~ 0.6 1'
   )
+  return true
+}
+
+// 一次性触发：扫一次找材料，找到就建 job，找不到安静返回（不做任何轮询/缓存）
+function shrineTryStart (server, level, anchor, player) {
+  var input = findShrineInput(anchor)
+  if (!input) return false
+  return shrineStartAt(server, shrineDimension(level), input, player)
+}
+
+// ---- 触发 ----
+// 红石：kubejs:altar_signal 上升沿（一次脉冲）触发一次合成
+BlockEvents.detectorPowered('altar_signal', event => {
+  try {
+    shrineTryStart(event.server, event.level, event.block, null)
+  } catch (e) {
+    console.warn('[ShrineTime] detectorPowered failed: ' + e)
+  }
+})
+
+// 手动：右键 altar_signal 块
+BlockEvents.rightClicked('kubejs:altar_signal', event => {
+  if (String(event.hand) !== 'MAIN_HAND') return
+  event.cancel()
+  shrineTryStart(event.server, event.level, event.block, event.player)
+})
+
+// 旧存档兼容：石按钮
+BlockEvents.rightClicked('minecraft:stone_button', event => {
+  if (String(event.hand) !== 'MAIN_HAND') return
+  if (!findShrineInput(event.block)) return
+  event.cancel()
+  shrineTryStart(event.server, event.level, event.block, event.player)
 })
 
 ServerEvents.tick(event => {
-  const keys = Object.keys(SHRINE_JOBS)
+  var keys = Object.keys(SHRINE_JOBS)
   if (keys.length === 0) return
 
-  const server = event.server
+  var server = event.server
 
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i]
-    const job = SHRINE_JOBS[key]
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i]
+    var job = SHRINE_JOBS[key]
     if (!job) continue
 
     job.left--

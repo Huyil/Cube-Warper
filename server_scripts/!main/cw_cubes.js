@@ -1063,7 +1063,7 @@ const C4_SEED_DIMS = {
   3: 'hexahedron:copper_remains', 4: 'hexahedron:dark_rocks', 5: 'hexahedron:toxic_caves',
   6: 'hexahedron:magnetic_ceiling', 7: 'hexahedron:endless_hoard', 8: 'hexahedron:pine_forrest',
   9: 'hexahedron:magma_plateau', 10: 'hexahedron:brimstone_veil', 12: 'hexahedron:snowstorm',
-  13: 'hexahedron:dusk', 14: 'hexahedron:endless_rainbows', 16: 'hexahedron:blood_ocean',
+  13: 'hexahedron:dusk_islands', 14: 'hexahedron:endless_rainbows', 16: 'hexahedron:blood_ocean',
   17: 'hexahedron:forsaken_planes', 18: 'hexahedron:silver_forest', 24: 'hexahedron:the_sugarscape',
   32: 'hexahedron:the_azurewood', 36: 'hexahedron:soul_valley', 48: 'hexahedron:the_umbral_sea',
   64: 'hexahedron:carrion_485', 72: 'hexahedron:gronglegrowth', 96: 'hexahedron:lavender_fields',
@@ -1071,6 +1071,21 @@ const C4_SEED_DIMS = {
   // 原包 ticket_selection 的两个特殊分支：eye = 999.. → the_edge_of_reality，infinite = ..-999 → overworld
   999: 'hexahedron:the_edge_of_reality',
   '-999': 'minecraft:overworld'
+}
+
+// 固定落点 core y（仅用于「高度图不可用 / 没有连续地表 / 天花板世界」的维度；
+// 其余维度一律按局部真实地表 +9 —— 见 c4ResolveY）。
+// 单位 = 方块 y，代表立方体核心（门面中心）；房间 = y-8 .. y+8，站立面 y-7。
+const C4_DIM_Y = {
+  'hexahedron:magnetic_ceiling': 40,       // 天花板世界：0..~45 是空腔，原包 ticket 固定 40.5
+  'hexahedron:stacked_rocks': 58,          // 原包 under_50（under 51）+ 8.5
+  'hexahedron:dark_rocks': 100,            // 无连续地表（浮岛）
+  'hexahedron:carrion_485': 162,
+  'hexahedron:the_sugarscape': 133,
+  'hexahedron:forsaken_planes': 134,
+  'hexahedron:lavender_fields': 134,
+  'hexahedron:the_edge_of_reality': 100,   // flat 97 层 nothing，不阻挡 motion
+  'minecraft:overworld': 100               // 256 层 filling，靠 fill 挖房间，必须保持 100
 }
 
 // ---------------------------------------------------------------------------- 三格插槽（原包 runtime_effects）
@@ -1190,16 +1205,41 @@ function c4PickDestForSeed(server, slot, seed) {
   console.info('[C4] 槽位 ' + slot + ' 运算符 seed=' + seed + ' → ' + dim)
   let x = c4CubeX(slot) + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER)
   let z = C4_Z + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER)
-  let y = 100
-  try {
-    let lv = c4Level(server, dim)
-    if (lv) {
-      let HM = c4Cls('net.minecraft.world.level.levelgen.Heightmap$Types')
-      let h = lv.getHeight(HM.MOTION_BLOCKING, x, z)
-      if (h && Number(h) > -50) y = Number(h) + 1
-    }
-  } catch (e) { console.warn('[C4] 高度图不可用，回退 y=100: ' + e) }
+  // 注意：这里【不再】读 heightmap 定 y。此刻目标区块八成还没加载，getHeight 会返回 0，
+  // 于是回退 y=100 —— 那正是"浮空 / 埋进基岩"的老 bug。y 只作占位/日志，
+  // 真正取值在 perform() 里（forceload 之后）由 c4ResolveY 决定。
+  let y = (C4_DIM_Y[dim] !== undefined) ? Number(C4_DIM_Y[dim]) : 100
   return { dim: dim, x: x, y: y, z: z, seed: seed }
+}
+
+// 最终落点 core y —— 全链路唯一的 y 决策点，只在目标区块已 forceload 之后调用。
+// 只信「合法区间内的真实地表」，排掉两类坏 heightmap：
+//   ① 0（区块没生成 / 全空柱），② 顶到世界顶（天花板世界，如 magnetic_ceiling，h=255/256）。
+// 返回整数 core y：房间 = y-8..y+8（含外壳 y-9..y+9 必须落在维度可建范围内）。
+function c4ResolveY(server, dim, x, z) {
+  let fixed = (C4_DIM_Y[dim] !== undefined) ? Number(C4_DIM_Y[dim]) : null
+  let lv = null, minY = 0, maxY = 256, h = null
+  try { lv = c4Level(server, dim) } catch (e) { console.warn('[C4] 落点 y: 取维度失败 ' + dim + ': ' + e) }
+  if (lv) {
+    try { minY = Number(lv.getMinBuildHeight()); maxY = Number(lv.getMaxBuildHeight()) } catch (e) {}
+    try {
+      let HM = c4Cls('net.minecraft.world.level.levelgen.Heightmap$Types')
+      h = Number(lv.getHeight(HM.MOTION_BLOCKING, Math.floor(x), Math.floor(z)))
+    } catch (e) { h = null; console.warn('[C4] 高度图不可用 ' + dim + ': ' + e) }
+  }
+  if (!isFinite(minY)) minY = 0
+  if (!isFinite(maxY)) maxY = minY + 256
+  let lo = minY + 9, hi = maxY - 10
+  // 合法高度：(minY+1, maxY-2) 之间。h=0（未加载）与 h≥maxY-2（天花板/顶到世界顶）都判废。
+  let hOk = (h !== null && isFinite(h) && h > minY + 1 && h < maxY - 2)
+  let y
+  if (fixed !== null) y = fixed
+  else if (hOk) y = h + 9          // heightmap 指向第一格空气 → 房间地板正好压在地表上（core = 地表 +9）
+  else y = 100
+  y = Math.round(Math.max(lo, Math.min(hi, y)))
+  console.info('[C4] 落点 y: dim=' + dim + ' h=' + (h === null ? 'n/a' : h) + ' fixed=' + (fixed === null ? '-' : fixed) +
+    ' → core=' + y + ' (房间 ' + (y - 8) + '..' + (y + 8) + ', 合法 ' + lo + '..' + hi + ')')
+  return y
 }
 
 // ---------------------------------------------------------------------------- 跃迁（串行队列）
@@ -1389,7 +1429,18 @@ function c4WarpBody(server, job) {
         return
       }
 
-      c4BuildRoom(server, d.dim, dx, dy, dz, ext, true)
+      // —— 落点 y 在这里定（t=80 时 1317 的 forceload 已经跑了 4 秒，heightmap 才是可信的）——
+      // 之前是在 c4PickDest 里取 heightmap，区块没加载 → h=0 → 回退 y=100 → 浮空/埋基岩。
+      d.y = c4ResolveY(server, d.dim, d.x, d.z)
+      dy = d.y + 0.5
+      let room = c4BuildRoom(server, d.dim, dx, dy, dz, ext, true)
+      // c4BuildRoom 可能因越界把核心 y 夹回合法区间：门必须跟着【实际建出来的房间】走，
+      // 否则门会浮在框梁上/埋进地板（正常情况 room.Y0 === floor(dy-8)，这段不触发）。
+      if (room && Math.floor(dy - 8) !== room.Y0) {
+        dy = room.Y0 + 8.5
+        d.y = Math.round(dy - 0.5)
+        console.warn('[C4] 房间 y 被夹取 → 门同步到 core=' + d.y + '（房间 ' + room.Y0 + '..' + room.Y1 + '）')
+      }
       // 只改 destination，不动主世界的门（moveSrc=false）
       let n = c4Retarget(server, cur.x, cur.y, cur.z, c4DimKey(d.dim), dx, dy, dz, false, d.dim, idName, ext, false)
       try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { console.warn('[C4] 反向门失败: ' + e) }
@@ -1720,7 +1771,8 @@ ServerEvents.commandRegistry(event => {
     let IAT = c4Cls('com.mojang.brigadier.arguments.IntegerArgumentType')
     let names = ['cube']
     for (let i = 0; i < names.length; i++) {
-      let root = cmdRoot.literal(names[i]).requires(src => src.hasPermission(4))
+      // /cube 本身对所有人开放（info/home/spawn）；管理命令在 /cube admin 下单独要求权限 4
+      let root = cmdRoot.literal(names[i])
       c4AttachSubs(root, cmdRoot, IAT, names[i])
       event.register(root)
     }
@@ -2125,7 +2177,28 @@ function c4ShellFill(server, dimId, b, block) {
 
 // 与 17x17 同一套方块：地板 / 顶圈 / 四角立柱 / +z 操控台
 function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole) {
-  let b = c4RoomBox(cx, cy, cz, ext), FX = Math.floor(cx), FZ = Math.floor(cz)
+  let b = c4RoomBox(cx, cy, cz, ext)
+  // —— 越界防御（只报警 + 夹取核心 y，不中断流程）——
+  // 房间连外壳占 Y0-1..Y1+1；越界时 fill/setblock 会被 runCommandSilent 静默拒绝，
+  // 表现就是"门在、笼子只有一半、里面全黑、玩家卡在基岩里"。所以宁可把整间房平移进合法区间。
+  try {
+    let lv = c4Level(server, dimId)
+    if (lv) {
+      let minY = Number(lv.getMinBuildHeight()), maxY = Number(lv.getMaxBuildHeight())
+      if (b.Y0 - 1 < minY || b.Y1 + 1 >= maxY) {
+        let py = Math.max(0, (ext && Number(ext.py)) | 0)
+        // 房间几何：Y0 = i-8, Y1 = i+8+16py（i = 核心整数 y）→ 含外壳解出 i 的合法区间
+        let iLo = minY + 9, iHi = maxY - 10 - 16 * py
+        let i = Math.round(cy - 0.5)
+        i = Math.max(iLo, Math.min(iHi, i))
+        console.warn('[C4] 房间越界 dim=' + dimId + ' cy=' + cy + ' Y0=' + b.Y0 + ' Y1=' + b.Y1 +
+          '（含外壳需 ' + (minY + 1) + '..' + (maxY - 2) + '）→ 核心 y 夹到 ' + (i + 0.5))
+        cy = i + 0.5
+        b = c4RoomBox(cx, cy, cz, ext)
+      }
+    }
+  } catch (e) { console.warn('[C4] 房间越界检查失败: ' + e) }
+  let FX = Math.floor(cx), FZ = Math.floor(cz)
   let run = (cmd) => { try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { console.warn('[C4] 房间: ' + e) } }
   // 大尺寸房间整块 fill 会超过 32768 上限（49×17×49=40817）→ 命令静默失败、旧方块留在原地。
   // 按 8 格一层清，单条最大 49×8×49=19208。

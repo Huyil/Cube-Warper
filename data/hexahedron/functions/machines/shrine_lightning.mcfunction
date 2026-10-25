@@ -1,2 +1,4 @@
-execute if block ~ ~26 ~ #caverns_and_chasms:copper_golem_summon_blocks if block ~ ~25 ~ immersiveengineering:coil_lv if block ~ ~24 ~ immersiveengineering:coil_lv if block ~ ~23 ~ immersiveengineering:coil_lv if block ~ ~22 ~ immersiveengineering:coil_lv if block ~ ~21 ~ immersiveengineering:coil_lv if block ~ ~20 ~ immersiveengineering:capacitor_lv{energy:100000} positioned ~ ~28 ~ run function hexahedron:machines/shrine_lightning_sequence
-
+# [已迁移] 逻辑在 KubeJS: server_scripts/!main/shrine_lightning_multi.js
+# 本文件故意留空（只有注释），防止与 JS 双份执行。
+# 原内容：守卫（塔顶 summon 方块 + 5 层 coil_lv + 满电 capacitor_lv{energy:100000}）
+#         -> positioned ~ ~28 ~ 调 hexahedron:machines/shrine_lightning_sequence
