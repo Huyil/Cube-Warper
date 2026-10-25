@@ -55,9 +55,10 @@ const C4_DEST_NUDGE = 1024     // 撞车 → 单调外移（+x 方向，第 i �
 const C4_DEST_JITTER = 768     // 兼容旧代码的旧参数（新逻辑走下面的环形随机）
 const C4_DEST_RMIN = 640       // 首次/原地随机传送：离本台的最小距离（>600 格）
 const C4_DEST_RMAX = 1600      // 首次/原地随机传送：最大距离（再大区块生成太慢）
-// 门面边长：真实开口只有 15×15（框梁各占 1 格），16×16 仍能盖住开口，但门面边缘离立方体边界
-// 退进半格 —— 这样贴着边缘放方块不会再被 IP 判成"穿门放到目的地/立方体外"。
-const C4_PORTAL_SPAN = 16.0
+// 门面边长：立方体 17 格里，四周框梁各占 1 格 → 真正的开口只有 15×15。
+// 门做成 15×15 正好嵌在开口内（门边=框梁内侧面），侧面不会再压着框梁；
+// 反向门由 IP 从正向门复制尺寸，重建正向门后必须一起重建反向门。
+const C4_PORTAL_SPAN = 15.0
 const C4_PORTAL_INSET = 0     // 原包门就是 17 宽、平面在壳外 0.01；再内缩会让门边和框梁之间露出黑缝
 const C4_T_PRELOAD = 186      // unfold(t=185) 之后 1 tick：用【最终】坐标做真实预载
 const C4_T_RETARGET = 195      // 数据包 85 选维度、185 建好笼子 → 186 预载、195 指门
@@ -2999,8 +3000,9 @@ function c4CmdDoors(ctx, slot) {
   if (!h || !h.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
   let cubeId = h.cube.id || ('cube' + slot)
   let ext = c4Ext(h.cube)
+  let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 传送器固定 17³
   let tp = c4TeleCore(slot)
-  let chunks = c4DoorPreload(server, ext, tp)
+  let chunks = c4DoorPreload(server, ext0, tp)
   // 只杀本台的门（portal 实体），绝不碰方块/别人的门/大厅门
   let killed = 0
   try {
@@ -3015,22 +3017,25 @@ function c4CmdDoors(ctx, slot) {
     })
   } catch (e1) {}
   let made = 0
-  try { made = c4MakeRoomPortals(server, slot, cubeId, ext, tp) } catch (e2) { console.warn('[C4] 造门失败: ' + e2) }
+  try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e2) { console.warn('[C4] 造门失败: ' + e2) }
   let seed = 0
   try { seed = c4ReadSeed(server, slot) } catch (e3) { seed = 0 }
   let dest = c4DestOf(h.cube, C4_SEED_DIMS[seed] || C4_SEED_DIMS[0])
   let aimed = 0
+  let bc = c4BaseCore(slot)
+  let rDimId = dest ? String(dest.dim) : 'hexahedron:bedrock_bottom'
+  let rpx = dest ? (dest.x + 0.5) : bc.x
+  let rpy = dest ? (dest.y + 0.5) : bc.y
+  let rpz = dest ? (dest.z + 0.5) : bc.z
   try {
-    if (dest) {
-      aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(dest.dim), dest.x + 0.5, dest.y + 0.5, dest.z + 0.5,
-        false, dest.dim, cubeId, ext, false, slot)
-    } else {
-      aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey('hexahedron:bedrock_bottom'), tp.x, tp.y, tp.z,
-        false, 'hexahedron:bedrock_bottom', cubeId, ext, false, slot)
-    }
+    aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(rDimId), rpx, rpy, rpz, false, rDimId, cubeId, ext0, false, slot)
   } catch (e4) { console.warn('[C4] 指门失败: ' + e4) }
   server.scheduleInTicks(20, () => {
-    try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e5) {}
+    try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
+  })
+  // 反向门尺寸是从正向门复制的：正向门重建后必须一起重建，否则反向门还是旧尺寸
+  server.scheduleInTicks(30, () => {
+    try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) } catch (e6) { console.warn('[C4] doors 反向门失败: ' + e6) }
   })
   console.info('[C4] /cwp doors ' + slot + ' ext=' + JSON.stringify(ext) + ' 预载=' + chunks + ' chunks 清旧门=' + killed + ' 重建=' + made + ' 指向=' + aimed)
   c4Reply(ctx, '槽位 ' + slot + ' 门重建：清 ' + killed + ' / 建 ' + made + ' / 指 ' + aimed + '（ext=' + JSON.stringify(ext) + '）')
