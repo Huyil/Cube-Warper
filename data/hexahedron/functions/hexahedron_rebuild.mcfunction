@@ -10,8 +10,8 @@ execute as @e[tag=outer_core] at @s run fill ~-8 ~-8 ~-8 ~8 ~8 ~8 air
 
 
 # Remove old portals
-execute as @e[type=minecraft:marker,tag=core] at @s as @e[type=minecraft:marker,distance=..30] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
-execute as @e[type=minecraft:marker,tag=outer_core] at @s as @e[type=minecraft:marker,distance=..30] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
+execute as @e[type=minecraft:marker,tag=core] at @s as @e[type=minecraft:marker,distance=..96] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
+execute as @e[type=minecraft:marker,tag=outer_core] at @s as @e[type=minecraft:marker,distance=..96] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
 
 
 # Portals

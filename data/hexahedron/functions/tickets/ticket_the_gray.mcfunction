@@ -3,7 +3,7 @@ execute as @e[tag=outer_core] at @s run fill ~-8 ~-8 ~-8 ~8 ~8 ~8 air
 kill @e[type=marker,tag=outer_core]
 
 ### INITIATE CONNECTION
-execute at @s as @e[type=immersive_portals:portal,name=main_cube,distance=..30] at @s run portal set_portal_destination hexahedron:the_gray ~ ~ ~
+execute at @s as @e[type=immersive_portals:portal,name=main_cube,distance=..96,tag=!cw_lobby] at @s run portal set_portal_destination hexahedron:the_gray ~ ~ ~
 execute at @s in hexahedron:the_gray run summon marker ~ ~ ~ {NoGravity:1b,Tags:["outer_core"]}
 
 ### QUE REPOSITIONING
