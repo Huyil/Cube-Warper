@@ -52,8 +52,12 @@ const C4_STATE_PATH = 'world/cubarper-state.json'
 const C4_DEST_MIN_SEP = 1200   // 必须 > 1000：原包 hex_anchor 的复用半径是 1000，小于它就会偷到别人的落点
 const C4_DEST_RETRY = 5        // 重新随机挑坐标最多 5 次
 const C4_DEST_NUDGE = 1024     // 撞车 → 单调外移（+x 方向，第 i 次偏移 i*1024）
-const C4_DEST_JITTER = 768     // 每次跃迁的随机抖动半径（原包只有 spreadplayers ±100，且会被 anchor 固定住）
-const C4_PORTAL_SPAN = 17.0        // 门面边长（原包 cb_make_portal 17 17；16.98 会在门边留 1px 缝）
+const C4_DEST_JITTER = 768     // 兼容旧代码的旧参数（新逻辑走下面的环形随机）
+const C4_DEST_RMIN = 640       // 首次/原地随机传送：离本台的最小距离（>600 格）
+const C4_DEST_RMAX = 1600      // 首次/原地随机传送：最大距离（再大区块生成太慢）
+// 门面边长：真实开口只有 15×15（框梁各占 1 格），16×16 仍能盖住开口，但门面边缘离立方体边界
+// 退进半格 —— 这样贴着边缘放方块不会再被 IP 判成"穿门放到目的地/立方体外"。
+const C4_PORTAL_SPAN = 16.0
 const C4_PORTAL_INSET = 0     // 原包门就是 17 宽、平面在壳外 0.01；再内缩会让门边和框梁之间露出黑缝
 const C4_T_PRELOAD = 186      // unfold(t=185) 之后 1 tick：用【最终】坐标做真实预载
 const C4_T_RETARGET = 195      // 数据包 85 选维度、185 建好笼子 → 186 预载、195 指门
@@ -1336,13 +1340,20 @@ function c4PickDest(server, slot) {
   try { seed = c4ReadSeed(server, slot) } catch (e) { seed = 0 }
   return c4PickDestForSeed(server, slot, seed)
 }
+// 以本台为圆心、随机角度、半径 [RMIN,RMAX] 的落点偏移（保证"传送 >600 格远"且方位均匀）
+function c4RandDestOffset() {
+  let ang = Math.random() * 2 * C4_PI
+  let r = C4_DEST_RMIN + Math.random() * (C4_DEST_RMAX - C4_DEST_RMIN)
+  return { x: Math.round(Math.cos(ang) * r), z: Math.round(Math.sin(ang) * r) }
+}
 // 已经算出 seed 时用它选目的地（消耗是逐 tick 的，t=60 的最终 seed 才是权威值）
 function c4PickDestForSeed(server, slot, seed) {
   let dim = C4_SEED_DIMS[seed] || C4_SEED_DIMS[0]
   if (!C4_SEED_DIMS[seed]) console.warn('[C4] 未知 seed=' + seed + '，回退 seed 0（graveyard）')
   console.info('[C4] 槽位 ' + slot + ' 运算符 seed=' + seed + ' → ' + dim)
-  let x = c4CubeX(slot) + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER)
-  let z = C4_Z + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER)
+  let off = c4RandDestOffset()
+  let x = c4CubeX(slot) + off.x
+  let z = C4_Z + off.z
   // 注意：这里【不再】读 heightmap 定 y。此刻目标区块八成还没加载，getHeight 会返回 0，
   // 于是回退 y=100 —— 那正是"浮空 / 埋进基岩"的老 bug。y 只作占位/日志，
   // 真正取值在 perform() 里（forceload 之后）由 c4ResolveY 决定。
@@ -1521,8 +1532,11 @@ function c4EnsureReverse(server, slot, dimId, dx, dy, dz, idName, round) {
 }
 function c4PickTempDest(server, slot, dimId) {
   let dim = String(dimId || 'minecraft:overworld')
-  let x = Math.floor(c4CubeX(slot) + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER))
-  let z = Math.floor(C4_Z + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER))
+  let off = c4RandDestOffset()
+  let x = Math.floor(c4CubeX(slot) + off.x)
+  let z = Math.floor(C4_Z + off.z)
+  console.info('[C4] 原地随机落点 slot' + slot + ' 偏移 ' + off.x + ',' + off.z
+    + '（距本台 ' + Math.round(Math.sqrt(off.x * off.x + off.z * off.z)) + ' 格）')
   let y = 100
   try { y = c4ResolveY(server, dim, x, z) } catch (e) {}
   return { dim: dim, x: x, y: y, z: z, seed: -1, temp: true }
@@ -4572,8 +4586,8 @@ function c4DoReduce(server, cube, face, player) {
 }
 
 // 3×3 连接洞激活：基地洞 ↔ 传送器洞，各一扇「从上方跳下」的单向水平门
-//   基地洞   (bas.x+0.5, bas.y+0.95, bas.z+0.5) → 传送器天花板下 (telTop-1.5)
-//   传送器洞 (tel.x+0.5, tel.y+0.95, tel.z+0.5) → 基地天花板下   (basTop-1.5)
+//   基地洞   (bas.x+0.5, bas.y+0.45, bas.z+0.5) → 传送器天花板下 (telTop-1.5)
+//   传送器洞 (tel.x+0.5, tel.y+0.45, tel.z+0.5) → 基地天花板下   (basTop-1.5)
 // cb_make_portal 直接生成、不建反向门 = 单向；重复激活先杀旧门再建（幂等）。
 function c4ActivateHole(server, slot, player) {
   try {
@@ -4610,8 +4624,9 @@ function c4ActivateHole(server, slot, player) {
       })
     })
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
-    let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.95, z: bz }, 3, 90)
-    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.95, z: tz }, 3, 90)
+    // 门面比地板低 0.55 格（原来是 0.05）——站在洞口边缘不会一迈步就被吞，要真掉下去才过门
+    let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.45, z: bz }, 3, 90)
+    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.45, z: tz }, 3, 90)
     let aim = (e, tag, dx, dy, dz) => {
       if (!e) return false
       try {
@@ -4626,8 +4641,8 @@ function c4ActivateHole(server, slot, player) {
     let okA = aim(A, 'cw_link_down', tx, telTop - 1.5, tz)   // 基地 → 传送器天花板下
     let okB = aim(B, 'cw_link_up', bx, basTop - 1.5, bz)     // 传送器 → 基地天花板下
     console.info('[C4] 3×3 洞 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.95) + ',' + bz + '→' + tx + ',' + (telTop - 1.5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.95) + ',' + tz + '→' + bx + ',' + (basTop - 1.5) + ',' + bz + (okB ? ' OK' : ' 失败'))
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.45) + ',' + bz + '→' + tx + ',' + (telTop - 1.5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.45) + ',' + tz + '→' + bx + ',' + (basTop - 1.5) + ',' + bz + (okB ? ' OK' : ' 失败'))
     try { c4BarTeam(server, slot, '3×3 洞已连通：跳进洞里可往返基地 / 传送器') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
