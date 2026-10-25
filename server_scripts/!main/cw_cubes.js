@@ -3901,6 +3901,18 @@ let C4_EXP_CLICK = {}
 function c4ExpandDeny(p, msg) { try { p.tell(Text.of('⟢ ' + msg)) } catch (e) {} }
 
 // 操控台在 +z 面中心（x+0.5, 98, 8），必须站在它前面 3.5 格内操作
+// 是否在【基地】盒内（扩展/拆除只认基地；传送器固定 17³ 不允许改）
+function c4InBase(p, slot) {
+  try {
+    if (c4DimOf(p) !== 'minecraft:overworld') return false
+    let a = c4BaseAnchor(slot)
+    let info = c4TeamOfSlot(slot)
+    let ext = info ? c4Ext(info.cube) : c4Ext(null)
+    let b = c4RoomBox(a.x + 0.5, a.y + 8.5, a.z + 0.5, ext)
+    return p.x >= b.X0 - 1 && p.x <= b.X1 + 2 && p.z >= b.Z0 - 1 && p.z <= b.Z1 + 2
+      && p.y >= b.Y0 - 1 && p.y <= b.Y1 + 2
+  } catch (e) { return false }
+}
 function c4AtConsole(p, cube) {
   // 站在【按钮锚点派生的舱体】内部就能操作
   let b = c4BtnPos(cube.slot)
@@ -4667,40 +4679,61 @@ function c4ActivateHole(server, slot, player) {
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
 }
 
+// 拆掉 3×3 连接门（两处洞都清；只杀 cw_link 系列，不碰 6 面门）
+function c4DeactivateHole(server, slot, player) {
+  try {
+    let bas = c4BaseAnchor(slot), tel = c4TeleAnchor(slot)
+    let n = 0
+    ;[[bas.x + 0.5, bas.y + 0.5, bas.z + 0.5], [tel.x + 0.5, tel.y + 0.5, tel.z + 0.5]].forEach(pt => {
+      ;['cw_link', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
+        try {
+          server.runCommandSilent('execute in minecraft:overworld positioned ' + pt[0] + ' ' + pt[1] + ' ' + pt[2]
+            + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..10]')
+          n++
+        } catch (e) {}
+      })
+    })
+    console.info('[C4] 3×3 连接门已拆除 slot=' + slot + '（基地洞/传送器洞两处，口令 ' + n + ' 条）')
+    try { c4BarTeam(server, slot, '3×3 连接门已拆除') } catch (e2) {}
+    return n
+  } catch (e) { console.warn('[C4] 3×3 拆除失败: ' + e); return 0 }
+}
+
 function c4ToolUse(event, reduce) {
   try {
     let p = event.player, server = event.server
     let t = c4Team(p), key = t ? c4TeamKey(t) : null
     let cube = key ? c4CubeOfTeam(key) : null
     if (!cube) { c4ExpandDeny(p, '你还没有立方体'); return }
-    // 3×3 地板洞激活：手持扩展器、视线朝下、在洞口 5 格内，双击确认
-    if (!reduce && Number(p.pitch) > 55) {
+    // 视线朝下 + 洞口附近双击：扩展器 = 激活 3×3，拆除器 = 拆掉 3×3
+    if (Number(p.pitch) > 55) {
       let nearHole = (a) => {
         let dd = Math.sqrt(Math.pow(p.x - (a.x + 0.5), 2) + Math.pow(p.z - (a.z + 0.5), 2))
         return dd < 5.5 && Math.abs(p.y - a.y) < 7
       }
       if (nearHole(c4BaseAnchor(cube.slot)) || nearHole(c4TeleAnchor(cube.slot))) {
-        let now0 = Date.now(), k0 = 'hole:' + c4Name(p) + ':' + cube.slot
+        let now0 = Date.now(), k0 = 'hole:' + (reduce ? 'r:' : 'e:') + c4Name(p) + ':' + cube.slot
         let last0 = C4_HOLE_CLICK[k0]
         if (!last0 || now0 - last0 > 5000) {
           C4_HOLE_CLICK[k0] = now0
-          c4ExpandDeny(p, '3×3 连接洞：再右键一次确认激活')
+          c4ExpandDeny(p, reduce ? '3×3 连接洞：再右键一次确认【拆除】' : '3×3 连接洞：再右键一次确认激活')
           return
         }
         C4_HOLE_CLICK[k0] = 0
-        c4ActivateHole(server, cube.slot, p)
+        if (reduce) c4DeactivateHole(server, cube.slot, p)
+        else c4ActivateHole(server, cube.slot, p)
         return
       }
     }
-    if (!c4AtConsole(p, cube)) { c4ExpandDeny(p, '需要站在操控台前'); return }
+    // 不朝下：只能在【基地】内用（传送器固定 17³，不许改）
+    if (!c4InBase(p, cube.slot)) { c4ExpandDeny(p, '扩展/拆除只能在基地内部使用'); return }
     let yaw = ((Number(p.yaw) % 360) + 360) % 360
     let pitch = Number(p.pitch)
     let face = null
     // MC 的 XRot：正 = 低头，负 = 抬头
     if (pitch < -50) face = 'py'
     else if (pitch > 50) { c4ExpandDeny(p, '底面不可操作'); return }
-    else face = ['z', 'nx', 'nz', 'px'][Math.round(yaw / 90) % 4]
-    if (face === 'z') { c4ExpandDeny(p, '操控台这一面不能操作'); return }
+    else face = ['z', 'nx', 'nz', 'px'][Math.round(yaw / 90) % 4]   // +z/-x/-z/+x 四面都能扩
     let now = Date.now(), k = (reduce ? 'r:' : 'e:') + c4Name(p)
     let last = C4_EXP_CLICK[k]
     if (!last || last.face !== face || now - last.t > 2000) {
