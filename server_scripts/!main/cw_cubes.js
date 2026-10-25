@@ -58,6 +58,7 @@ const C4_DEST_RMAX = 1600      // 首次/原地随机传送：最大距离（再
 // 门面边长：立方体 17 格里，四周框梁各占 1 格 → 真正的开口只有 15×15。
 // 门做成 15×15 正好嵌在开口内（门边=框梁内侧面），侧面不会再压着框梁；
 // 反向门由 IP 从正向门复制尺寸，重建正向门后必须一起重建反向门。
+const C4_LINK_RENDER = false       // 3×3 连接门是否渲染：false = 关掉渲染（看起来就是普通洞口，但仍能传送）
 const C4_PORTAL_SPAN = 15.0
 const C4_PORTAL_INSET = 0     // 原包门就是 17 宽、平面在壳外 0.01；再内缩会让门边和框梁之间露出黑缝
 const C4_T_PRELOAD = 186      // unfold(t=185) 之后 1 tick：用【最终】坐标做真实预载
@@ -4695,7 +4696,8 @@ function c4ActivateHole(server, slot, player) {
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
     let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.80, z: bz }, 3, 90)
-    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.80, z: tz }, 3, 90)
+    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.50, z: tz }, 3, 90)   // 底下这扇再低 0.3
+
     let aim = (e, tag, dx, dy, dz) => {
       if (!e) return false
       try {
@@ -4710,7 +4712,7 @@ function c4ActivateHole(server, slot, player) {
       // ⚠ 关键：直接改字段/走 API 之后必须 reloadAndSyncToClient，否则【客户端没有这扇门】：
       //    玩家看不到门（"像普通洞"），而且玩家的传送是客户端预测 + 服务端校验 → 也不会触发。
       //    （物品/村民是纯服务端实体，所以它们能正常传送，玩家不能——这就是之前现象不一致的原因）
-      try { e.setIsVisible(true) } catch (e2) {}
+      try { e.setIsVisible(!!C4_LINK_RENDER) } catch (e2) {}
       try { c4Sync(e) } catch (e3) {}
       return ok
     }
@@ -4720,7 +4722,7 @@ function c4ActivateHole(server, slot, player) {
     let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz - 2.0)    // 传送器 → 基地（洞口旁 -z 2 格）
     console.info('[C4] 3×3 洞 slot=' + slot
       + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + '→' + tx + ',' + (tel.y + 5) + ',' + (tz - 2.0) + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.80) + ',' + tz + '→' + bx + ',' + (bas.y + 5) + ',' + (bz - 2.0) + (okB ? ' OK' : ' 失败'))
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + '→' + bx + ',' + (bas.y + 5) + ',' + (bz - 2.0) + (okB ? ' OK' : ' 失败'))
     try { c4BarTeam(server, slot, '3×3 洞已连通：跳进洞里可往返基地 / 传送器') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
