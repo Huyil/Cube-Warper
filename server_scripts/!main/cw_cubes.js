@@ -66,6 +66,14 @@ let C4_RL = null
 let C4_J = {}
 let C4_FTB = { tried: false, api: null, ok: false }
 let C4_DB = null
+// ⚠ 世代守卫：/reload 会新建脚本上下文，但【上一世代】排进 scheduleInTicks 的回调仍持着旧 C4_DB。
+// 它们一旦写库，就会用旧数据覆盖新世代刚写的内容（表现：ext 永远从旧值开始、扩不上去）。
+// 每次脚本加载时 +1；所有会写库/动方块的延迟回调都在开头比对，旧世代直接 return。
+let C4_GEN = 1
+try { C4_GEN = (Number(global.C4_GEN) || 0) + 1; global.C4_GEN = C4_GEN } catch (eGen) {}
+// 每槽扩展锁：施工期间拒绝新的扩展（避免两次构建互相覆盖）
+let C4_EXT_BUSY = {}
+let C4_EXT_TS = {}   // 每槽最近一次扩展时间（软锁：<400ms 视为抢跑，1s 间隔正常放行）
 let C4_Q = []
 let C4_BUSY = null
 let C4_STATE = { worldStarted: false }
@@ -605,8 +613,8 @@ function c4DestConflicts(ownKey, dimId, x, y, z) {
   let cubes = c4Db().cubes
   for (let k in cubes) {
     if (!cubes[k] || k === ownKey) continue
-    let d = cubes[k].dest
-    if (!d || d.dim !== dimId) continue
+    let d = c4DestOf(cubes[k], dimId)
+    if (!d) continue
     let dx = d.x - x, dz = d.z - z
     if (dx * dx + dz * dz < C4_DEST_MIN_SEP * C4_DEST_MIN_SEP && Math.abs(d.y - y) < 64) {
       out.push('slot' + cubes[k].slot)
@@ -1322,13 +1330,43 @@ function c4SlotInFlight(slot) {
   for (let i = 0; i < C4_Q.length; i++) if (Number(C4_Q[i].slot) === Number(slot)) return true
   return false
 }
-function c4Enqueue(server, slot, teamKey, clickerName, forceRandom) {
+function c4Enqueue(server, slot, teamKey, clickerName, forceRandom, randomDim) {
   for (let i = 0; i < C4_Q.length; i++) if (C4_Q[i].slot === slot) { C4_Q.splice(i, 1); break }
-  C4_Q.push({ slot: slot, teamKey: teamKey, clicker: clickerName || null, riders: [], forceRandom: !!forceRandom })
+  C4_Q.push({ slot: slot, teamKey: teamKey, clicker: clickerName || null, riders: [], forceRandom: !!forceRandom, randomDim: randomDim || null, gen: C4_GEN })
   c4Pump(server)
 }
 // S5：同维度二次确认（纯内存，10s 有效；不写库、不动 time 计分板）
 let C4_RANDOM_PENDING = {}
+// S5：每队一张 dim → {x,y,z} 表（cube.dests）；老 cube.dest 一次性迁入（幂等）
+function c4Dests(cube) { return (cube && cube.dests && typeof cube.dests === 'object') ? cube.dests : {} }
+function c4DestOf(cube, dim) {
+  let t = c4Dests(cube)
+  let e = t[String(dim)]
+  if (!e || e.x === undefined || e.y === undefined || e.z === undefined) return null
+  return { dim: String(dim), x: Number(e.x), y: Number(e.y), z: Number(e.z) }
+}
+function c4DestSet(cube, dim, x, y, z) {
+  if (!cube) return
+  if (!cube.dests || typeof cube.dests !== 'object') cube.dests = {}
+  cube.dests[String(dim)] = { x: Math.round(Number(x)), y: Math.round(Number(y)), z: Math.round(Number(z)) }
+}
+function c4MigrateDests() {
+  let db = c4Db(), cubes = db.cubes || {}, n = 0
+  for (let k in cubes) {
+    let c = cubes[k]
+    if (!c) continue
+    if (c.dest && c.dest.dim) {
+      if (!c.dests || typeof c.dests !== 'object') c.dests = {}
+      if (!c.dests[String(c.dest.dim)]) {
+        c.dests[String(c.dest.dim)] = { x: Math.round(Number(c.dest.x)), y: Math.round(Number(c.dest.y)), z: Math.round(Number(c.dest.z)) }
+        n++
+      }
+      delete c.dest
+    }
+  }
+  if (n > 0) { c4Save(); console.info('[C4] dest → dests[dim] 迁移：' + n + ' 条（一次性/幂等）') }
+  return n
+}
 function c4DestValid(server, d) {
   if (!d || !d.dim) return false
   let lv = c4Level(server, d.dim)
@@ -1347,8 +1385,8 @@ function c4DestRoomExists(server, d) {
     return bl != null && String(bl.id) !== 'minecraft:air'
   } catch (e) { return false }
 }
-function c4PickTempDest(server, slot) {
-  let dim = 'minecraft:overworld'
+function c4PickTempDest(server, slot, dimId) {
+  let dim = String(dimId || 'minecraft:overworld')
   let x = Math.floor(c4CubeX(slot) + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER))
   let z = Math.floor(C4_Z + Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER))
   let y = 100
@@ -1364,6 +1402,11 @@ function c4Pump(server) {
 }
 
 function c4Warp(server, job) {
+  if (job && job.gen !== undefined && job.gen !== C4_GEN) {
+    console.warn('[C4] 旧世代跃迁作业丢弃 slot=' + (job && job.slot))
+    C4_BUSY = null
+    return
+  }
   try { c4WarpBody(server, job) }
   catch (e) {
     console.error('[C4] 跃迁异常 slot=' + (job && job.slot) + ': ' + e)
@@ -1393,16 +1436,7 @@ function c4WarpBody(server, job) {
   // ⓪ 确保本台区块加载（否则 c4PortalsNear 看不到门 → "关门 0 扇"）
   server.runCommandSilent(c4ForceloadBox(slot, true))
 
-  // ⓪.5 记下本台上一次的落点（cube.dest 稍后会在 perform() 里被新落点覆盖）
-  // 这里只抓快照、不动世界：旧笼子要等新房间建好、玩家已经到新落点之后才拆
-  // （c4WarpEnd → c4CleanOldDest；先建后拆，跃迁中途旧房间还在，失败回滚也不会把家拆没）
-  try {
-    let prev = (info && info.cube) ? info.cube.dest : null
-    if (prev && prev.dim) {
-      job.oldDest = { dim: String(prev.dim), x: Number(prev.x), y: Number(prev.y), z: Number(prev.z) }
-      console.info('[C4] 旧落点快照 ' + job.oldDest.dim + ' @' + job.oldDest.x + ',' + job.oldDest.y + ',' + job.oldDest.z)
-    }
-  } catch (e) { console.warn('[C4] 读取旧落点失败: ' + e) }
+  // ⓪.5 旧落点快照在选点后按【目标维度】写进 job.oldDest（见下面 dests 查表）
 
   // ① 关门 + 清上次反向门
   // ⚠ 不再调用 c4Hide：setIsVisible(false)+reloadAndSync 之后，KubeJS 这边的 server.entities
@@ -1442,26 +1476,30 @@ function c4WarpBody(server, job) {
   // —— 自主跃迁（KubeJS 控制）：选维度 → 高度图找地表 → 建笼 → 逐面指门 + 反向门 ——
   let idName = (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot)
   let ext = (info && info.cube) ? c4Ext(info.cube) : { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
-  // S5：固定目的地优先。cube.dest 合法且房间还在 → 直接复用（只指门，不重建）；
-  // 房间被破坏 → 允许重建一次；首次/同维度随机 → 走原随机逻辑（后者标记 tempDest，不写库）
-  let fixed = (info && info.cube && info.cube.dest) ? info.cube.dest : null
+  // S5：目标维度由 seed 决定 → 查 dests[目标维度]。有且房间在 → 复用（只指门，不重建）；
+  // 没有/房间坏了 → 分配一次（坏的允许重建一次）；同维度随机 → 临时落点（不写表）。
+  let seedNow = 0
+  try { seedNow = c4ReadSeed(server, slot) } catch (eSeed) { seedNow = 0 }
+  let targetDim = String(C4_SEED_DIMS[seedNow] || C4_SEED_DIMS[0])
+  let prevDest = (info && info.cube) ? c4DestOf(info.cube, targetDim) : null
   let useFixed = false, rebuildFixed = false
-  if (!job.forceRandom && fixed && c4DestValid(server, fixed)) {
-    if (c4DestRoomExists(server, fixed)) { useFixed = true }
-    else { rebuildFixed = true; console.warn('[C4] 固定目的地房间不存在/被破坏 → 重建一次 ' + fixed.dim + ' @' + fixed.x + ',' + fixed.y + ',' + fixed.z) }
+  if (!job.forceRandom && prevDest && c4DestValid(server, prevDest)) {
+    if (c4DestRoomExists(server, prevDest)) useFixed = true
+    else { rebuildFixed = true; console.warn('[C4] 固定目的地房间不存在/被破坏 → 重建一次 ' + prevDest.dim + ' @' + prevDest.x + ',' + prevDest.y + ',' + prevDest.z) }
   }
   job.useFixedDest = useFixed
   job.rebuildFixed = rebuildFixed
+  job.oldDest = (info && info.cube && !job.tempDest) ? prevDest : null
   let d
   if (useFixed || rebuildFixed) {
-    d = { dim: fixed.dim, x: Number(fixed.x), y: Number(fixed.y), z: Number(fixed.z), seed: 0 }
+    d = { dim: targetDim, x: prevDest.x, y: prevDest.y, z: prevDest.z, seed: seedNow }
     console.info('[C4] 槽位 ' + slot + (useFixed ? ' 复用固定目的地 ' : ' 重建固定目的地 ') + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
   } else if (job.forceRandom) {
-    d = c4PickTempDest(server, slot)
+    d = c4PickTempDest(server, slot, job.randomDim || targetDim)
     job.tempDest = true
-    console.info('[C4] 槽位 ' + slot + ' 同维度随机传送（临时落点，不写库）→ ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+    console.info('[C4] 槽位 ' + slot + ' 同维度随机传送（临时落点，不写表）→ ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
   } else {
-    d = c4PickDest(server, slot)
+    d = c4PickDestForSeed(server, slot, seedNow)
   }
   // 高度图给的是整数方块 y；核心必须落在方块中心（x.5），否则 ±8.51 会整体低半格，
   // 表现就是"目的地门比框架低半格"。
@@ -1600,7 +1638,7 @@ function c4WarpBody(server, job) {
             return
           }
           // 临时落点（同维度随机）不写库；固定目的地原样写回也无害
-          try { if (!job.tempDest && info && info.cube) { info.cube.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z }; c4Save() } } catch (e) {}
+          try { if (!job.tempDest && info && info.cube) { c4DestSet(info.cube, d.dim, d.x, d.y, d.z); c4Save() } } catch (e) {}
           // 成功落点写进 job：c4WarpEnd 要拿它判断"新旧是不是同一处"，并据此决定拆不拆旧笼子。
           // （job.dest 以前只在没人调用的 c4PreloadFinal 里赋值，所以"落点已记录"从来没打印过）
           job.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z, cx: Math.floor(d.x / 16) * 16, cz: Math.floor(d.z / 16) * 16 }
@@ -1696,6 +1734,10 @@ function c4RestoreHome(server, slot, idName) {
 }
 
 function c4WarpEnd(server, slot, label, job) {
+  if (job && job.gen !== undefined && job.gen !== C4_GEN) {
+    console.warn('[C4] 旧世代跃迁收尾丢弃 slot=' + slot)
+    return
+  }
   // 动画/跃迁彻底结束才把按钮、界面弹回来（按下期间按钮一直是 pressed，右键不会再触发）
   try {
     let bp = c4BtnPos(slot)
@@ -1747,7 +1789,12 @@ function c4WarpEnd(server, slot, label, job) {
   try {
     if (job && job.dest) {
       let info2 = c4TeamOfSlot(slot)
-      if (info2 && info2.cube) { info2.cube.dest = job.dest; c4Save() }
+      if (info2 && info2.cube && !job.tempDest) {
+        c4DestSet(info2.cube, job.dest.dim, job.dest.x, job.dest.y, job.dest.z)
+        info2.cube.curDestDim = job.dest.dim
+        c4Save()
+        console.info('[C4] curDestDim 更新 slot=' + slot + ' → ' + job.dest.dim)
+      }
       let d = job.dest
       server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + d.cx + ' ' + d.cz)
       console.info('[C4] 落点已记录 dim=' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
@@ -1959,20 +2006,28 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
   }
 
   // S5：目的地与当前维度相同（通常主世界）→ 第一次只提示，10s 内再按才随机传送一次
-  let forceRandom = false
+  let forceRandom = false, randomDim = null
   try {
-    let dest = (info.cube && info.cube.dest && info.cube.dest.dim) ? info.cube.dest : null
-    if (dest && String(dest.dim) === 'minecraft:overworld') {
+    // 同维度 = 本次跃迁的目标维度 === 玩家此刻所在维度（不是"传送器在哪个维度"，也不写死主世界）
+    let pDim = String(c4DimOf(clicker))
+    let sd0 = 0
+    try { sd0 = c4ReadSeed(server, slot) } catch (e0) { sd0 = 0 }
+    let targetDim = String(C4_SEED_DIMS[sd0] || C4_SEED_DIMS[0])
+    let curDim = (info.cube && info.cube.curDestDim) ? String(info.cube.curDestDim) : null
+    console.info('[C4] 同维度判定 slot=' + slot + ' newDim=' + targetDim + ' curDestDim=' + curDim
+      + ' → ' + ((curDim && targetDim === curDim) ? '触发确认' : '正常跃迁'))
+    if (curDim && targetDim === curDim) {
       let now = Date.now()
-      let pd = C4_RANDOM_PENDING[slot]
-      if (!pd || now > pd.deadline) {
-        C4_RANDOM_PENDING[slot] = { deadline: now + 10000 }
-        c4BtnLog(false, clicker, slot, '同维度：等待第二次确认')
-        try { clicker.tell(Text.of('⟢ 再按一次可随机传送一次（10 秒内）')) } catch (e) {}
+      let pend = C4_RANDOM_PENDING[slot]
+      if (!pend || now > pend.deadline || String(pend.dim) !== targetDim) {
+        C4_RANDOM_PENDING[slot] = { deadline: now + 10000, dim: targetDim }
+        c4BtnLog(false, clicker, slot, '同维度：等待第二次确认 ' + targetDim)
+        try { clicker.tell(Text.of('⟢ 已连接到 ' + targetDim + ' · 再按一次可随机传送一次（10 秒内）')) } catch (e1) {}
         return
       }
       C4_RANDOM_PENDING[slot] = null
       forceRandom = true
+      randomDim = targetDim
     } else {
       C4_RANDOM_PENDING[slot] = null
     }
@@ -1995,7 +2050,7 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
     let bp = c4BtnPos(slot)
     server.runCommandSilent('execute in minecraft:overworld run setblock ' + bp.x + ' ' + bp.y + ' ' + bp.z + ' kubejs:launch_button_pressed')
   } catch (e) {}
-  c4Enqueue(server, slot, info.key, c4Name(clicker), forceRandom)
+  c4Enqueue(server, slot, info.key, c4Name(clicker), forceRandom, randomDim)
 })
 
 // ---------------------------------------------------------------------------- 事件：登录/重生
@@ -2237,7 +2292,9 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
       .then(cmdRoot.literal('nx').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nx'); return 1 })
         .then(cmdRoot.literal('force').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nx', true); return 1 })))
       .then(cmdRoot.literal('nz').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nz'); return 1 })
-        .then(cmdRoot.literal('force').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nz', true); return 1 })))))
+        .then(cmdRoot.literal('force').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'nz', true); return 1 })))
+      .then(cmdRoot.literal('pz').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'pz'); return 1 })
+        .then(cmdRoot.literal('force').executes(ctx => { c4CmdExpand(ctx, IAT.getInteger(ctx, 'slot'), 'pz', true); return 1 })))))
 
   root.then(cmdRoot.literal('flush').requires(src => src.hasPermission(2)).executes(ctx => {
     C4_Q = []; C4_BUSY = null
@@ -2384,7 +2441,9 @@ function c4CmdDoors(ctx, slot) {
   // S2：门在传送器里 —— 整组重建 6 扇（内部方块不动），再按原目的地重指
   let n = 0
   try { n = c4MakeRoomPortals(server, slot, idName, ext0, tp) } catch (e) { c4Reply(ctx, '造门异常: ' + e); return }
-  let dest = (h.cube && h.cube.dest && h.cube.dest.dim) ? h.cube.dest : null
+  let sdd = 0
+  try { sdd = c4ReadSeed(server, slot) } catch (e0) { sdd = 0 }
+  let dest = c4DestOf(h.cube, C4_SEED_DIMS[sdd] || C4_SEED_DIMS[0])
   let aimed = 0
   try {
     if (dest) {
@@ -2487,7 +2546,8 @@ function c4CmdInfo(ctx) {
   c4Reply(ctx, '核心: ' + (labels.length ? labels.join('  ') : '（无）'))
   for (let k in db.cubes) {
     let c = db.cubes[k]
-    let dd = c.dest ? ('  落点 ' + c.dest.dim + '@' + c.dest.x + ',' + c.dest.y + ',' + c.dest.z) : ''
+    let dkeys = Object.keys(c4Dests(c))
+    let dd = dkeys.length ? ('  落点表 ' + dkeys.length + ' 个维度') : ''
     c4Reply(ctx, 'slot' + c.slot + ' id=' + (c.id || '?') + ' x=' + c.x + ' 《' + c.name + '》' + (c.provisioned ? '' : ' [未建造]') + dd)
   }
   let orphans = c4OrphanSlots()
@@ -2653,6 +2713,35 @@ function c4CabinOkBlock(id) {
   return false
 }
 // 扫完调 done(非框架方块数)；0 = 内腔干净
+// S4：同步数内腔方块（只统计、不拦截）。大房间按 step 抽样，避免卡主线程太久。
+function c4CountInside(server, cx, cy, cz, ext) {
+  let n = 0
+  try {
+    let lv = c4Level(server, 'minecraft:overworld')
+    if (!lv) lv = c4OwLevel(server)
+    if (!lv) { console.warn('[C4] 内腔统计：取不到 overworld level'); return 0 }
+    let b = c4RoomBox(cx, cy, cz, ext)
+    let w = b.X1 - b.X0 - 1, h = b.Y1 - b.Y0 - 1, d = b.Z1 - b.Z0 - 1
+    let step = 1
+    while ((w / step) * (h / step) * (d / step) > 8000) step++
+    for (let y = b.Y0 + 1; y <= b.Y1 - 1; y += step) {
+      for (let z = b.Z0 + 1; z <= b.Z1 - 1; z += step) {
+        for (let x = b.X0 + 1; x <= b.X1 - 1; x += step) {
+          try {
+            let bl = lv.getBlock(x, y, z)
+            if (!bl) continue
+            let id = String(bl.id)
+            if (id === 'minecraft:air' || id === 'minecraft:cave_air' || id === 'minecraft:void_air') continue
+            if (id === 'minecraft:light' || id === 'minecraft:structure_void') continue
+            if (id.indexOf('kubejs:') === 0) continue
+            n++
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (e2) {}
+  return n
+}
 function c4GateCabin(server, dimId, cx, cy, cz, ext, done) {
   let b = c4RoomBox(cx, cy, cz, ext)
   let x0 = b.X0 + 1, x1 = b.X1 - 1, y0 = b.Y0 + 1, y1 = b.Y1 - 1, z0 = b.Z0 + 1, z1 = b.Z1 - 1
@@ -2685,7 +2774,7 @@ function c4GateCabin(server, dimId, cx, cy, cz, ext, done) {
 // clearMode：'all'   = 首次创建，整块内腔清空（原行为）
 //            'shell' = 扩展/拆除重建，只清旧外壳 + 新体积−旧体积环带，绝不碰旧内腔
 //            'none'  = 不清
-function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt) {
+function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt, slot) {
   let b = c4RoomBox(cx, cy, cz, ext)
   // —— 越界防御（只报警 + 夹取核心 y，不中断流程）——
   // 房间连外壳占 Y0-1..Y1+1；越界时 fill/setblock 会被 runCommandSilent 静默拒绝，
@@ -2735,10 +2824,18 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   run(`fill ${b.X1} ${b.Y0} ${b.Z1} ${b.X1} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
   run(`fill ${b.X0} ${b.Y0} ${b.Z1} ${b.X0} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
   run(`fill ${b.X1} ${b.Y0} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z0} kubejs:warping_frame`)
-  run(`setblock ${FX} ${b.Y0 + 1} ${b.Z1} kubejs:warping_controls`)
-  run(`setblock ${FX + 1} ${b.Y0 + 1} ${b.Z1} kubejs:warping_interface`)
-  run(`setblock ${FX - 1} ${b.Y0 + 1} ${b.Z1} kubejs:warping_disc_drive`)
-  run(`setblock ${FX} ${b.Y0 + 1} ${b.Z1 - 1} kubejs:launch_button[facing=north]`)
+  // S4：有按钮锚点时，操控台/按钮固定在锚点（+z 墙面外移也不会带着它们走）
+  let bpx = FX, bpy = b.Y0 + 1, bpz = b.Z1
+  try {
+    if (slot !== undefined && slot !== null && slot >= 0) {
+      let bb = c4BtnPos(slot)
+      bpx = bb.x; bpy = bb.y; bpz = bb.z + 1
+    }
+  } catch (e0) {}
+  run(`setblock ${bpx} ${bpy} ${bpz} kubejs:warping_controls`)
+  run(`setblock ${bpx + 1} ${bpy} ${bpz} kubejs:warping_interface`)
+  run(`setblock ${bpx - 1} ${bpy} ${bpz} kubejs:warping_disc_drive`)
+  run(`setblock ${bpx} ${bpy} ${bpz - 1} kubejs:launch_button[facing=north]`)
   // 隐形光源：不加的话房间里/透过门看到的目的地笼子是全黑的（看起来就像"门坏了"）
   run(`setblock ${FX} ${b.Y0 + 8} ${FZ} minecraft:light[level=15]`)
   // 排气孔（原包 17x17 的 warping_vent 位置，按当前尺寸换算到四个角附近）
@@ -3035,42 +3132,55 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
 // force = 显式跳过"内腔有建筑"安全闸（命令本来就要权限 4，OP 自担风险）
 function c4CmdExpand(ctx, slot, face, force) {
   let server = ctx.source.server
-  let info = c4TeamOfSlot(slot)
-  let oldExt = info ? c4Ext(info.cube) : c4Ext({ ext: C4_EXT_TMP[slot] })
-  let ext = c4Ext(oldExt)
-  if (face === 'nz') { if (ext.nz >= 2) { c4Reply(ctx, '-z 已达上限'); return } ext.nz++ }
-  else if (face === 'px') { if (ext.px >= 1) { c4Reply(ctx, '+x 已达上限'); return } ext.px++ }
-  else if (face === 'nx') { if (ext.nx >= 1) { c4Reply(ctx, '-x 已达上限'); return } ext.nx++ }
-  else if (face === 'py') { if (ext.py >= 4) { c4Reply(ctx, '顶部已达上限'); return } ext.py++ }
-  else { c4Reply(ctx, '该面不可扩展（+z 是操控台）'); return }
-  let cx = c4CubeX(slot) + 0.5, cz = C4_Z + 0.5
-  // 先把扩展后的范围 forceload（block 坐标，必须整数），20 tick 后再建，不然 fill/summon 全落空
-  let X0 = Math.floor(cx - 8 - 16 * ext.nx), X1 = Math.floor(cx + 8 + 16 * ext.px)
-  let Z0 = Math.floor(cz - 8 - 16 * ext.nz), Z1 = Math.floor(cz + 8 + 16 * ext.pz)
-  server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (X0 - 8) + ' ' + (Z0 - 8) + ' ' + (X1 + 8) + ' ' + (Z1 + 8))
-  let idName = info ? info.cube.id : ('cube' + slot)
-  // 落盘 + 重建只在安全闸通过后做：拒绝时 ext 不写库（否则库里是新尺寸、房间还是旧的）
-  let commit = () => { if (info) { info.cube.ext = ext; c4Save() } else { C4_EXT_TMP[slot] = ext } }
-  let build = () => {
-    try {
-      // 只清旧外壳 + 新体积−旧体积环带，内腔（玩家建筑）一格不动
-      c4BuildRoom(server, 'minecraft:overworld', cx, C4_CORE_Y, cz, ext, false, 'shell', oldExt)
-      let n = c4MakeRoomPortals(server, slot, idName, ext)
-      console.info('[C4] 扩展 slot' + slot + ' ' + JSON.stringify(ext) + ' 门=' + n)
-    } catch (e) { console.warn('[C4] 扩展失败: ' + e) }
+  let nowMs = Date.now()
+  if (C4_EXT_TS[slot] && (nowMs - C4_EXT_TS[slot]) < 400) {
+    c4Reply(ctx, '槽位 ' + slot + ' 上一次扩展还在施工（<0.4s），稍后再试')
+    return
   }
-  server.scheduleInTicks(20, () => {
-    if (force) { console.warn('[C4] 扩展 slot' + slot + ' 跳过安全闸（force）'); commit(); build(); return }
-    c4GateCabin(server, 'minecraft:overworld', cx, C4_CORE_Y, cz, oldExt, (bad) => {
-      if (bad > 0) {
-        console.warn('[C4] 扩展拒绝：内腔有 ' + bad + ' 个非框架方块')
-        c4Reply(ctx, '舱内有建筑，先清空/搬走再扩展')
-        return
-      }
-      commit(); build()
-    })
+  C4_EXT_TS[slot] = nowMs
+  if (face !== 'nz' && face !== 'px' && face !== 'nx' && face !== 'py' && face !== 'pz') { c4Reply(ctx, '该面不可扩展'); return }
+  // —— 修法 1：命令时同步算 + 落盘（回调里不再写 ext）——
+  C4_DB = null
+  let info = c4TeamOfSlot(slot)
+  let cur = c4Ext(info ? info.cube : { ext: C4_EXT_TMP[slot] })
+  let oldJson = JSON.stringify(cur)
+  if (face === 'nz') cur.nz++
+  else if (face === 'px') cur.px++
+  else if (face === 'nx') cur.nx++
+  else if (face === 'py') cur.py++
+  else if (face === 'pz') cur.pz++
+  let oldExt = c4Ext({ ext: JSON.parse(oldJson) })
+  if (info) { info.cube.ext = cur; c4Save() } else { C4_EXT_TMP[slot] = cur; c4Save() }
+  C4_EXT_BUSY[slot] = true
+  let tp = c4TeleCore(slot)
+  let idName = info ? info.cube.id : ('cube' + slot)
+  let g = C4_GEN
+  let inside = c4CountInside(server, tp.x, tp.y, tp.z, oldExt)
+  server.runCommandSilent('execute in minecraft:overworld run forceload add '
+    + Math.floor(tp.x - 8 - 16 * oldExt.nx - 16) + ' ' + Math.floor(tp.z - 8 - 16 * oldExt.nz - 16) + ' '
+    + Math.floor(tp.x + 8 + 16 * oldExt.px + 80) + ' ' + Math.floor(tp.z + 8 + 16 * oldExt.pz + 80))
+  server.scheduleInTicks(2, () => {
+    try {
+      if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（扩展 slot' + slot + '）'); C4_EXT_BUSY[slot] = false; return }
+      // 修法 2：回调里重新取对象/取 ext（用于建舱），但**绝不写回**
+      C4_DB = null
+      let info2 = c4TeamOfSlot(slot)
+      let ext2 = c4Ext(info2 ? info2.cube : { ext: C4_EXT_TMP[slot] })
+      c4BuildRoom(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext2, false, 'shell', oldExt, slot)
+      let n = c4MovePortals(server, slot, idName, ext2, tp)
+      if (n < 6) n = c4MakeRoomPortals(server, slot, idName, ext2, tp)
+      server.scheduleInTicks(10, () => {
+        if (g !== C4_GEN) return
+        try { c4EnsureSix(server, slot, idName, tp.x, tp.y, tp.z, ext2, 2) } catch (e1) {}
+      })
+      let sx = 17 + 16 * (ext2.px + ext2.nx), sz = 17 + 16 * (ext2.pz + ext2.nz), sy = 17 + 16 * ext2.py
+      console.info('[C4] 扩展 slot=' + slot + ' face=' + face + ' 旧ext=' + oldJson + ' 新ext=' + JSON.stringify(ext2)
+        + ' 内腔方块=' + inside + '（保留） 门=' + n)
+      c4Reply(ctx, '扩展 ' + face + ' 完成 · 立方体 ' + sx + '×' + sz + '×' + sy + '（本次 +16，可继续扩）')
+    } catch (e) { console.warn('[C4] 扩展失败: ' + e); c4Reply(ctx, '扩展失败: ' + e) }
+    C4_EXT_BUSY[slot] = false
   })
-  c4Reply(ctx, '扩展已排队：' + face + '（20 tick 后生效）')
+  c4Reply(ctx, '扩展已排队：' + face + '（本次 +16，已写入 ext=' + JSON.stringify(cur) + '）')
 }
 
 // ---------------------------------------------------------------------------- 启动
@@ -3512,18 +3622,23 @@ function c4CmdDestSet(ctx, slot, dim, x, y, z) {
   if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
   let d = { dim: String(dim), x: Math.floor(Number(x)), y: Math.floor(Number(y)), z: Math.floor(Number(z)) }
   if (!c4DestValid(ctx.source.server, d)) { c4Reply(ctx, '目的地不合法（维度不存在/超出可建高度）'); return }
-  info.cube.dest = d
+  c4DestSet(info.cube, d.dim, d.x, d.y, d.z)
   c4Save()
-  console.info('[C4] dest set slot=' + slot + ' → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
-  c4Reply(ctx, 'dest set slot=' + slot + ' → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+  console.info('[C4] dest set slot=' + slot + ' [' + d.dim + '] = ' + d.x + ',' + d.y + ',' + d.z)
+  c4Reply(ctx, 'dest set slot=' + slot + ' [' + d.dim + '] = ' + d.x + ',' + d.y + ',' + d.z)
 }
 function c4CmdDestShow(ctx, slot) {
   let info = c4TeamOfSlot(slot)
   if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
-  let d = info.cube.dest
-  if (!d || !d.dim) { c4Reply(ctx, 'slot' + slot + ' 目的地：未分配'); return }
-  c4Reply(ctx, 'slot' + slot + ' 目的地：' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
-    + '（房间' + (c4DestRoomExists(ctx.source.server, d) ? '存在' : '缺失') + '）')
+  let t = c4Dests(info.cube)
+  let keys = Object.keys(t)
+  if (keys.length === 0) { c4Reply(ctx, 'slot' + slot + ' 目的地表：空（首次跃迁分配）'); return }
+  c4Reply(ctx, 'slot' + slot + ' 目的地表（' + keys.length + ' 个维度）：')
+  for (let i = 0; i < keys.length; i++) {
+    let k = keys[i], e = t[k]
+    let dd = { dim: k, x: Number(e.x), y: Number(e.y), z: Number(e.z) }
+    c4Reply(ctx, '  ' + k + ' @' + dd.x + ',' + dd.y + ',' + dd.z + '（房间' + (c4DestRoomExists(ctx.source.server, dd) ? '存在' : '缺失') + '）')
+  }
 }
 // /cube admin bind <slot> <x> <y> <z>：写 cube.btn，清旧 6 面门，按新按钮原点重建 6 门并校验
 function c4CmdBind(ctx, slot, x, y, z) {
@@ -3568,6 +3683,34 @@ function c4CmdBind(ctx, slot, x, y, z) {
   // ② 写锚点
   info.cube.btn = { x: bx, y: by, z: bz }
   c4Save()
+  // ②.5 先把 6 个门面前 2 格清成 air（只清 3×3 中心 × 厚度 2，不挖大范围）
+  let clearedFaces = 0
+  try {
+    let ext0c = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
+    let c0 = { x: bx + 0.5, y: by + 7.5, z: bz - 6.5 }
+    let T0 = c4FaceTargets(c0.x, c0.y, c0.z, ext0c)
+    for (let di = 0; di < C4_FACE_DIRS.length; di++) {
+      let dd = C4_FACE_DIRS[di]
+      let q = T0[dd].p
+      let x0, x1, y0, y1, z0, z1
+      if (dd === 'y' || dd === '-y') { x0 = q[0] - 1; x1 = q[0] + 1; z0 = q[2] - 1; z1 = q[2] + 1; y0 = q[1]; y1 = q[1] }
+      else if (dd === 'x' || dd === '-x') { z0 = q[2] - 1; z1 = q[2] + 1; y0 = q[1] - 1; y1 = q[1] + 1; x0 = q[0]; x1 = q[0] }
+      else { x0 = q[0] - 1; x1 = q[0] + 1; y0 = q[1] - 1; y1 = q[1] + 1; z0 = q[2]; z1 = q[2] }
+      let nx = (dd === 'x') ? -1 : (dd === '-x') ? 1 : 0
+      let ny = (dd === 'y') ? -1 : (dd === '-y') ? 1 : 0
+      let nz = (dd === 'z') ? -1 : (dd === '-z') ? 1 : 0
+      let ok = 0
+      for (let t = 0; t < 2; t++) {
+        try {
+          let r = Number(server.runCommandSilent('execute in minecraft:overworld run fill '
+            + Math.floor(x0 + nx * t) + ' ' + Math.floor(y0 + ny * t) + ' ' + Math.floor(z0 + nz * t) + ' '
+            + Math.floor(x1 + nx * t) + ' ' + Math.floor(y1 + ny * t) + ' ' + Math.floor(z1 + nz * t) + ' minecraft:air'))
+          if (!isNaN(r)) ok++
+        } catch (e) {}
+      }
+      if (ok >= 2) clearedFaces++
+    }
+  } catch (e) {}
 
   // ③ 按新按钮原点重建 6 面门 + 指门 + 校验
   let core = { x: bx + 0.5, y: by + 7.5, z: bz - 6.5 }
@@ -3575,7 +3718,9 @@ function c4CmdBind(ctx, slot, x, y, z) {
   let made = 0
   try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, core) }
   catch (e4) { console.warn('[C4] bind 建门失败: ' + e4) }
-  let dest = (info.cube.dest && info.cube.dest.dim) ? info.cube.dest : null
+  let sdd2 = 0
+  try { sdd2 = c4ReadSeed(server, slot) } catch (e0) { sdd2 = 0 }
+  let dest = c4DestOf(info.cube, C4_SEED_DIMS[sdd2] || C4_SEED_DIMS[0])
   try {
     if (dest) {
       c4Retarget(server, core.x, core.y, core.z, c4DimKey(dest.dim),
@@ -3591,8 +3736,8 @@ function c4CmdBind(ctx, slot, x, y, z) {
       console.info('[C4] bind 校验 slot=' + slot + ' faces=' + c4FaceSummary(synced.faces))
     } catch (e6) {}
   })
-  console.info('[C4] bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed)
-  c4Reply(ctx, 'bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed)
+  console.info('[C4] bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
+  c4Reply(ctx, 'bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
 }
 function c4CmdTeleportMove(ctx, slot, x, y, z) {
   let server = ctx.source.server
@@ -3625,67 +3770,48 @@ function c4ClearRoom(server, dimId, cx, cy, cz, ext) {
 // 按当前 ext 重建：主世界房间 + 6 扇矩形门 + 目的地笼子（同 ext）+ 反向门
 function c4ApplyExt(server, cube, ext, player, face, verb, oldExt) {
   let slot = cube.slot
-  let oe = oldExt || c4Ext(cube)
-  let cx = c4CubeX(slot) + 0.5, cz = C4_Z + 0.5
-  let CAGE = 'hexahedron:bedrock_bottom'
-  let d = (cube.dest && cube.dest.dim)
-    ? { dim: cube.dest.dim, x: cube.dest.x + 0.5, y: cube.dest.y, z: cube.dest.z + 0.5 }
-    : { dim: CAGE, x: cx, y: C4_CORE_Y, z: cz }
-  if (d.dim === 'minecraft:overworld' && Math.abs(d.x - cx) < 1 && Math.abs(d.z - cz) < 1) d = { dim: CAGE, x: cx, y: C4_CORE_Y, z: cz }
-
-  let fx = Math.floor(cx), fz = Math.floor(cz)
-  let dfx = Math.floor(d.x), dfz = Math.floor(d.z)
-  server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
-  server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (dfx - 40) + ' ' + (dfz - 40) + ' ' + (dfx + 40) + ' ' + (dfz + 40))
-
-  // 只有门多于 6 扇（历史遗留重复）才清；正常情况【搬门】保留目的地
-  let killByTag = (dim) => {
+  let tp = c4TeleCore(slot)
+  let g = C4_GEN
+  let oldJson = JSON.stringify(oldExt || c4Ext(cube))
+  let oldExtObj = c4Ext({ ext: JSON.parse(oldJson) })
+  server.runCommandSilent('execute in minecraft:overworld run forceload add '
+    + Math.floor(tp.x - 8 - 16 * (oldExt ? oldExt.nx : 0) - 16) + ' ' + Math.floor(tp.z - 8 - 16 * (oldExt ? oldExt.nz : 0) - 16) + ' '
+    + Math.floor(tp.x + 8 + 16 * (oldExt ? oldExt.px : 0) + 80) + ' ' + Math.floor(tp.z + 8 + 16 * (oldExt ? oldExt.pz : 0) + 80))
+  server.scheduleInTicks(2, () => {
     try {
-      server.runCommandSilent('execute in ' + dim + ' run kill @e[type=immersive_portals:portal,tag=cw_id_' + cube.id + ']')
-      server.runCommandSilent('execute in ' + dim + ' run kill @e[type=immersive_portals:portal,tag=cw_rev_' + cube.id + ']')
-    } catch (e) { console.warn('[C4] 清门失败(' + dim + '): ' + e) }
-  }
-  try {
-    let cnt = c4PortalsNear(server, cx, C4_CORE_Y, cz).length
-    if (cnt > 6) { killByTag('minecraft:overworld'); killByTag(d.dim) }
-  } catch (e) {}
-
-  // —— 安全闸：先扫旧内腔，扫完才落盘 + 重建 ——
-  // 旧代码在这里（以及下面）直接 c4ClearRoom(oldExt) 把旧尺寸整块清成 air，
-  // 于是"扩展 = 玩家基地被铲平"。现在：拒绝时 ext 不写库（房间/登记保持一致），
-  // 通过时只按 'shell' 模式清旧外壳 + 新体积−旧体积环带。
-  server.scheduleInTicks(10, () => {
-    c4GateCabin(server, 'minecraft:overworld', cx, C4_CORE_Y, cz, oe, (bad) => {
-      if (bad > 0) {
-        console.warn('[C4] 扩展拒绝：内腔有 ' + bad + ' 个非框架方块')
-        try { player.tell(Text.of('⟢ 舱内有建筑，先清空/搬走再扩展')) } catch (e) { console.warn('[C4] 拒绝提示失败: ' + e) }
-        // 物品路径在调用前已经扣了扩展器 → 拒绝时退回去，别让玩家白掉一个
-        if (verb === '扩展') { try { player.give('kubejs:cube_expander') } catch (e2) {} }
-        return
-      }
-      cube.ext = ext
-      c4Save()
+      if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（' + verb + ' slot' + slot + '）'); C4_EXT_BUSY[slot] = false; return }
+      C4_DB = null
+      let info2 = c4TeamOfSlot(slot)
+      let ext2 = c4Ext(info2 ? info2.cube : cube)
+      let inside = c4CountInside(server, tp.x, tp.y, tp.z, oldExtObj)
+      c4BuildRoom(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext2, false, 'shell', oldExtObj, slot)
+      let n = c4MovePortals(server, slot, cube.id, ext2, tp)
+      if (n < 6) { try { c4MakeRoomPortals(server, slot, cube.id, ext2, tp) } catch (e0) {} }
       server.scheduleInTicks(10, () => {
-        try {
-          // S2：基地不再承载跃迁 → 扩展只重建【基地】外壳/环带（不搬门、不碰目的地）
-          c4BuildRoom(server, 'minecraft:overworld', cx, C4_CORE_Y, cz, ext, false, 'shell', oe)
-          console.info('[C4] ' + verb + ' slot' + slot + ' ' + face + ' ext=' + JSON.stringify(ext) + '（S2：只扩基地，传送器不动）')
-          let sx = 17 + 16 * (ext.px + ext.nx), sz = 17 + 16 * (ext.pz + ext.nz), sy = 17 + 16 * ext.py
-          c4ExpandDeny(player, verb + ' ' + face + ' 完成 · 基地 ' + sx + '×' + sz + '×' + sy)
-        } catch (e) { console.warn('[C4] ' + verb + '执行失败: ' + e); c4ExpandDeny(player, verb + '失败，见控制台') }
+        if (g !== C4_GEN) return
+        try { c4EnsureSix(server, slot, cube.id, tp.x, tp.y, tp.z, ext2, 2) } catch (e1) {}
       })
-    })
+      let sx = 17 + 16 * (ext2.px + ext2.nx), sz = 17 + 16 * (ext2.pz + ext2.nz), sy = 17 + 16 * ext2.py
+      console.info('[C4] ' + verb + ' slot=' + slot + ' face=' + face + ' 旧ext=' + oldJson + ' 新ext=' + JSON.stringify(ext2)
+        + ' 内腔方块=' + inside + '（保留） 门=' + n)
+      c4ExpandDeny(player, verb + ' ' + face + ' 完成 · 立方体 ' + sx + '×' + sz + '×' + sy + '（本次 +16，可继续扩）')
+    } catch (e) { console.warn('[C4] ' + verb + '执行失败: ' + e); c4ExpandDeny(player, verb + '失败，见控制台') }
+    C4_EXT_BUSY[slot] = false
   })
 }
 
 function c4DoExpand(server, cube, face, player) {
   let ext = c4Ext(cube)
-  let limit = { px: 1, nx: 1, nz: 2, py: 4 }
-  if (face === 'px') { if (ext.px >= limit.px) { c4ExpandDeny(player, '+x 已到上限'); return } ext.px++ }
-  else if (face === 'nx') { if (ext.nx >= limit.nx) { c4ExpandDeny(player, '-x 已到上限'); return } ext.nx++ }
-  else if (face === 'nz') { if (ext.nz >= limit.nz) { c4ExpandDeny(player, '-z 已到上限'); return } ext.nz++ }
-  else if (face === 'py') { if (ext.py >= limit.py) { c4ExpandDeny(player, '顶面已到上限'); return } ext.py++ }
+  // S4：物品路径同样无上限，每次只加一级（+16）
+  if (face === 'px') ext.px++
+  else if (face === 'nx') ext.nx++
+  else if (face === 'nz') ext.nz++
+  else if (face === 'py') ext.py++
+  else if (face === 'pz') ext.pz++
   else { c4ExpandDeny(player, '该面不可扩展'); return }
+  let nowMs2 = Date.now()
+  if (C4_EXT_TS[slot] && (nowMs2 - C4_EXT_TS[slot]) < 400) { c4ExpandDeny(player, '上一次扩展还在施工（<0.4s）'); return }
+  C4_EXT_TS[slot] = nowMs2
   try {
     if (!player.isCreative()) {
       let st = player.mainHandItem
@@ -3693,7 +3819,12 @@ function c4DoExpand(server, cube, face, player) {
       st.shrink(1)
     }
   } catch (e) { console.warn('[C4] 扣扩展器失败: ' + e) }
-  c4ApplyExt(server, cube, ext, player, face, '扩展', c4Ext(cube))
+  // 修法 1：物品路径也在命令时同步落盘
+  let oldExt = c4Ext(cube)
+  cube.ext = ext
+  c4Save()
+  C4_EXT_BUSY[slot] = true
+  c4ApplyExt(server, cube, ext, player, face, '扩展', oldExt)
 }
 
 function c4DoReduce(server, cube, face, player) {
@@ -3793,6 +3924,8 @@ ServerEvents.tick(event => {
     let n = c4RestoreButtons(event.server)
     console.info('[C4] 启动复位：检查 ' + n + ' 台车厢的按钮状态')
   } catch (e) { console.warn('[C4] 启动复位异常: ' + e) }
+  // S5：老 cube.dest → cube.dests[dim]（一次性、幂等）
+  try { c4MigrateDests() } catch (eD) { console.warn('[C4] dest 迁移异常: ' + eD) }
   // S1：老存档的门没有 cw_face_*/cw_team_* → 第一个 tick 按 cw_id_* + 几何补一次（幂等，等下次操作也会补）
   try { c4MigrateDoorTags(event.server) } catch (e) { console.warn('[C4] 门 tag 迁移异常: ' + e) }
 })
