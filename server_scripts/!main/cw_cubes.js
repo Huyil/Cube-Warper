@@ -4702,10 +4702,17 @@ function c4ActivateHole(server, slot, player) {
         e.addTag('cw_link'); e.addTag(tag); e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId)
         e.addTag(c4TeamTagOf(slot))
       } catch (e0) {}
+      let ok = false
       try {
-        return c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'),
+        ok = c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'),
           c4Vec(dx, dy, dz), e.x, e.y, e.z)
-      } catch (e1) { return false }
+      } catch (e1) { ok = false }
+      // ⚠ 关键：直接改字段/走 API 之后必须 reloadAndSyncToClient，否则【客户端没有这扇门】：
+      //    玩家看不到门（"像普通洞"），而且玩家的传送是客户端预测 + 服务端校验 → 也不会触发。
+      //    （物品/村民是纯服务端实体，所以它们能正常传送，玩家不能——这就是之前现象不一致的原因）
+      try { e.setIsVisible(true) } catch (e2) {}
+      try { c4Sync(e) } catch (e3) {}
+      return ok
     }
     // 落点 = 地板上 4 格 + 横向让开洞口 4 格：
     //   否则人正好落在洞口正上方，会立刻再掉进另一扇门，来回弹（"只能上不能下"就是这么来的）
