@@ -4696,29 +4696,22 @@ function c4ActivateHole(server, slot, player) {
           + (p[0] + 1) + ' ' + (p[1] + dy0) + ' ' + (p[2] + 1) + ' minecraft:air destroy') } catch (e2) {}
       })
     })
-    // ③.5 基地洞口围一圈玻璃（5×5 环，中间 3×3 留空）——只在生成 3×3 门之前铺一次
+    // ③.5 两个洞口各盖 3×3 玻璃（构建器激活时一次性铺；玩家以后自己拆掉才能掉进去）
     try {
-      let gx = Math.floor(bx), gz = Math.floor(bz), gy = bas.y
-      ;[[gx - 2, gz - 2, gx + 2, gz - 2], [gx - 2, gz + 2, gx + 2, gz + 2],
-        [gx - 2, gz - 1, gx - 2, gz + 1], [gx + 2, gz - 1, gx + 2, gz + 1]].forEach(r => {
-        try {
-          server.runCommandSilent('execute in minecraft:overworld run fill ' + r[0] + ' ' + gy + ' ' + r[1] + ' '
-            + r[2] + ' ' + gy + ' ' + r[3] + ' minecraft:glass')
-        } catch (eG) {}
-      })
-      console.info('[C4] 基地洞口玻璃圈：5×5 环 @' + gx + ',' + gy + ',' + gz + '（中间 3×3 留空）')
-    } catch (eG2) { console.warn('[C4] 基地玻璃圈失败: ' + eG2) }
+      let gbx = Math.floor(bx), gbz = Math.floor(bz), gtx = Math.floor(tx), gtz = Math.floor(tz)
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gbx - 1) + ' ' + bas.y + ' ' + (gbz - 1) + ' '
+        + (gbx + 1) + ' ' + bas.y + ' ' + (gbz + 1) + ' minecraft:glass')
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gtx - 1) + ' ' + tel.y + ' ' + (gtz - 1) + ' '
+        + (gtx + 1) + ' ' + tel.y + ' ' + (gtz + 1) + ' minecraft:glass')
+      console.info('[C4] 隧道玻璃盖：基地 @' + gbx + ',' + bas.y + ',' + gbz + ' / 传送器 @' + gtx + ',' + tel.y + ',' + gtz + '（3×3，玩家可自行拆除）')
+    } catch (eGl) { console.warn('[C4] 隧道玻璃盖失败: ' + eGl) }
 
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
-    // 只在【基地侧】建一扇下行门；传送器侧不建门（避免和下面 down 面抢），
-    // 而是在传送器洞中心放一块玻璃当落脚点 —— 落点就能直接对准正下方、不用横向偏移。
+    // 两扇门：基地洞 → 传送器正下方；传送器洞 → 基地正下方（回程）。
+    // 两个洞口都被玻璃盖住（上一步）→ 平时不会误掉；玩家拆掉哪边就能从哪边下去。
     let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.80, z: bz }, 3, 90)
-    let B = null
-    try {
-      server.runCommandSilent('execute in minecraft:overworld run setblock ' + Math.floor(tx) + ' ' + tel.y + ' ' + Math.floor(tz) + ' minecraft:glass')
-      console.info('[C4] 隧道：传送器洞中心放玻璃 @' + Math.floor(tx) + ',' + tel.y + ',' + Math.floor(tz))
-    } catch (eGl) {}
+    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.50, z: tz }, 3, 90)
 
     let aim = (e, tag, dx, dy, dz) => {
       if (!e) return false
@@ -4741,10 +4734,11 @@ function c4ActivateHole(server, slot, player) {
     // 落点 = 地板上 4 格 + 横向让开洞口 2 格（-z 一侧）：
     //   洞口半径 1.5（3×3）+ 玩家半宽 0.3 → 至少让开 1.8 才不会一落地又掉回去；2 格是贴边值。
     let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz)   // 基地 → 传送器（洞中心正下方，不错位）
-    let okB = false
+    let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz)     // 传送器 → 基地（洞中心正下方，不错位）
     console.info('[C4] 隧道 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → 传送器正下方 ' + tx + ',' + (tel.y + 5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + '（传送器侧不建门，洞中心已放玻璃）')
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → ' + tx + ',' + (tel.y + 5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + ' → ' + bx + ',' + (bas.y + 5) + ',' + bz + (okB ? ' OK' : ' 失败')
+      + '（两洞已盖 3×3 玻璃）')
     try { c4BarTeam(server, slot, '隧道: 基地 ↔ 传送器 已连通') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
