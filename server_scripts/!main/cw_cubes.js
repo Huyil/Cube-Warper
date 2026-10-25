@@ -1121,12 +1121,15 @@ const C4_VECTOR_OPS = {
   crimson:   { op: null, v: 0,  dust: null }   // 在标签里 → 会被消耗，但原包没有它的运算/粒子行
 }
 function c4SlotX(slot, i) { return Math.floor(c4CubeX(slot)) + i }
-// 操控台贴着 +z 内壁：基础 z=8；若立方体在 +z 方向扩过，操控台跟着 Z1 外移（每级 +16）
+// 操控台贴着 +z 内壁（Z1）：基础 z=8。
+// 注意：+z 面不可扩展（c4CmdExpand 明确拒绝 "+z 是操控台"），所以 Z1 永远 = 8；
+// 这里的偏移必须用 pz、不能是 nz —— 之前写 nz 会让 -z 每扩一级把读位往 +z 推 16 格，
+// 而操控台根本没动，于是算子全读成空气、种子恒为 0，跃迁起不来。
 function c4SlotZ(slot) {
   let z = C4_Z + 8
   try {
     let h = c4TeamOfSlot(slot)
-    if (h && h.cube) z += 16 * c4Ext(h.cube).nz
+    if (h && h.cube) z += 16 * c4Ext(h.cube).pz
   } catch (e) {}
   return Math.floor(z)
 }
@@ -1308,24 +1311,16 @@ function c4WarpBody(server, job) {
   // ⓪ 确保本台区块加载（否则 c4PortalsNear 看不到门 → "关门 0 扇"）
   server.runCommandSilent(c4ForceloadBox(slot, true))
 
-  // ⓪.5 清掉本台上一次落点的镜像笼子（原包只建不拆，多跳会留下一串副本）
+  // ⓪.5 记下本台上一次的落点（cube.dest 稍后会在 perform() 里被新落点覆盖）
+  // 这里只抓快照、不动世界：旧笼子要等新房间建好、玩家已经到新落点之后才拆
+  // （c4WarpEnd → c4CleanOldDest；先建后拆，跃迁中途旧房间还在，失败回滚也不会把家拆没）
   try {
     let prev = (info && info.cube) ? info.cube.dest : null
     if (prev && prev.dim) {
-      let busy = false
-      server.players.forEach(pl => {
-        try {
-          if (c4DimOf(pl) === prev.dim && c4Dist2(pl.x, pl.y, pl.z, prev.x, prev.y, prev.z) < 900) busy = true
-        } catch (e) {}
-      })
-      if (busy) console.info('[C4] 上次落点有人，跳过清理 ' + prev.dim + ' @' + prev.x + ',' + prev.y + ',' + prev.z)
-      else {
-        server.runCommandSilent('execute in ' + prev.dim + ' positioned ' + prev.x + ' ' + prev.y + ' ' + prev.z + ' run kill @e[type=immersive_portals:portal,distance=..30]')
-        server.runCommandSilent('execute in ' + prev.dim + ' positioned ' + prev.x + ' ' + prev.y + ' ' + prev.z + ' run fill ~-9 ~-9 ~-9 ~9 ~9 ~9 air')
-        console.info('[C4] 已清除上次落点笼子 ' + prev.dim + ' @' + prev.x + ',' + prev.y + ',' + prev.z)
-      }
+      job.oldDest = { dim: String(prev.dim), x: Number(prev.x), y: Number(prev.y), z: Number(prev.z) }
+      console.info('[C4] 旧落点快照 ' + job.oldDest.dim + ' @' + job.oldDest.x + ',' + job.oldDest.y + ',' + job.oldDest.z)
     }
-  } catch (e) { console.warn('[C4] 清理上次落点失败: ' + e) }
+  } catch (e) { console.warn('[C4] 读取旧落点失败: ' + e) }
 
   // ① 关门 + 清上次反向门
   // ⚠ 不再调用 c4Hide：setIsVisible(false)+reloadAndSync 之后，KubeJS 这边的 server.entities
@@ -1489,6 +1484,10 @@ function c4WarpBody(server, job) {
             return
           }
           try { if (info && info.cube) { info.cube.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z }; c4Save() } } catch (e) {}
+          // 成功落点写进 job：c4WarpEnd 要拿它判断"新旧是不是同一处"，并据此决定拆不拆旧笼子。
+          // （job.dest 以前只在没人调用的 c4PreloadFinal 里赋值，所以"落点已记录"从来没打印过）
+          job.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z, cx: Math.floor(d.x / 16) * 16, cz: Math.floor(d.z / 16) * 16 }
+          job.destOK = true
           console.info('[C4] 剧场版 e 校验通过：正向=' + n + ' 反向=' + rev + ' → 跃迁完成 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
           server.scheduleInTicks(10, () => c4WarpEnd(server, slot, label, job))
         } catch (e) {
@@ -1640,9 +1639,138 @@ function c4WarpEnd(server, slot, label, job) {
     }
   } catch (e) { console.warn('[C4] 落点记录失败: ' + e) }
 
+  // 拆掉【上一次】的落点笼子：此刻新房间已建好、玩家已在新落点，旧房间才是可丢的。
+  // 只有本次真的校验通过（job.destOK）才动，失败/取消路径一律不碰旧落点。
+  try { if (job && job.destOK) c4CleanOldDest(server, slot, job) } catch (e) { console.warn('[C4] 清理旧落点失败: ' + e) }
+
   C4_BUSY = null
   // 成功路径不往聊天框发任何东西（倒计时/排队都在动作条），失败提示已在各自分支发出
   c4Pump(server)
+}
+
+// ---------------------------------------------------------------------------- 旧落点清理
+// 每跃迁一次就换一个落点，旧房间（地板/顶圈/洞口封/操控台 + 反向门）不拆的话会在每个维度里
+// 越堆越多。这里在新房间建好、玩家已到新落点之后，按【精确坐标 + 只 Replace 自己放的方块】
+// 的方式拆旧房间，绝不无参 fill air —— 旧落点周围可能已经被玩家当成基地来用。
+function c4DimNorm(id) {
+  let s = String(id === null || id === undefined ? '' : id)
+  return s.indexOf(':') >= 0 ? s : ('minecraft:' + s)
+}
+// 旧落点 32 格内的在线玩家（按维度 + 距离）：有人就跳过清理，等人走了下一跳再说
+function c4OldDestBusy(server, od) {
+  let names = []
+  try {
+    server.players.forEach(p => {
+      try {
+        if (c4DimNorm(c4DimOf(p)) !== c4DimNorm(od.dim)) return
+        if (c4Dist2(p.x, p.y, p.z, od.x, od.y, od.z) > 32 * 32) return
+        names.push(c4Name(p))
+      } catch (e) {}
+    })
+  } catch (e) {}
+  return names
+}
+function c4CleanOldDest(server, slot, job) {
+  let od = job ? job.oldDest : null
+  let nd = job ? job.dest : null
+  if (!od || !od.dim || !nd || !nd.dim) return
+  let ox = Math.floor(Number(od.x)), oy = Math.floor(Number(od.y)), oz = Math.floor(Number(od.z))
+  if (isNaN(ox) || isNaN(oy) || isNaN(oz)) return
+  let odc = { dim: od.dim, x: ox, y: oy, z: oz }
+  let where = odc.dim + ' @' + ox + ',' + oy + ',' + oz
+  let hs = c4TeamOfSlot(slot)
+  let idName = (hs && hs.cube && hs.cube.id) ? hs.cube.id : ('cube' + slot)
+  let ext = c4Ext(hs && hs.cube ? hs.cube : null)
+  let b = c4RoomBox(ox, oy, oz, ext)
+  // 范围 = 房间 box 四周各放 1 格（外壳/洞口封可能在外侧一格）
+  let x0 = b.X0 - 1, x1 = b.X1 + 1, z0 = b.Z0 - 1, z1 = b.Z1 + 1
+  let y0 = b.Y0 - 1, y1 = b.Y1 + 1
+  let roomW = b.X1 - b.X0 + 1, roomD = b.Z1 - b.Z0 + 1
+  // ②-a 新旧同一处（同维度 + x/z 差 ≤2）→ 这就是新落点，不能拆
+  //      另外两个房间若近到会互相重叠（< 房间宽度），也不拆：那是刚建好的新房间
+  if (c4DimNorm(od.dim) === c4DimNorm(nd.dim)) {
+    let ndx = Math.floor(Number(nd.x)), ndz = Math.floor(Number(nd.z))
+    let adx = Math.abs(ox - ndx), adz = Math.abs(oz - ndz)
+    if (adx <= 2 && adz <= 2) {
+      console.info('[C4] 旧落点与新落点同一处，跳过清理 ' + where)
+      return
+    }
+    if (adx < roomW + 2 && adz < roomD + 2) {
+      console.info('[C4] 新旧落点过近（房间会重叠），跳过清理 ' + where + ' → ' + ndx + ',' + ndz)
+      return
+    }
+  }
+  // ②-d 每队私有的起始笼（hexahedron:bedrock_bottom）永不清理
+  if (c4DimNorm(od.dim) === 'hexahedron:bedrock_bottom') {
+    console.info('[C4] 旧落点是起始笼，保留不清理 ' + where)
+    return
+  }
+  // ②-a 安全闸：旧落点有人就不动
+  let who = c4OldDestBusy(server, odc)
+  if (who.length > 0) {
+    console.info('[C4] 旧落点有人，暂不清理 ' + where + '（' + who.join(',') + '）')
+    return
+  }
+
+  // 旧落点的区块大概率早就卸载了（上一跳的 forceload 也释放了）：fill/kill 只对已加载区块生效
+  try {
+    server.runCommandSilent('execute in ' + odc.dim + ' run forceload add ' + x0 + ' ' + z0 + ' ' + x1 + ' ' + z1)
+  } catch (e) { console.warn('[C4] 旧落点 forceload 失败: ' + e) }
+
+  server.scheduleInTicks(5, () => {
+    try {
+      // 5 tick 后再确认一次：这期间有人跑回旧落点就放弃（这个房间会留着，不做无人值守的补拆）
+      let who2 = c4OldDestBusy(server, odc)
+      if (who2.length > 0) {
+        console.info('[C4] 旧落点有人，暂不清理 ' + where + '（' + who2.join(',') + '）')
+        return
+      }
+      // ②-b 门：只杀带本台 tag 的（旧目的地那侧的门同时带 cw_rev_<id> 和 cw_id_<id>）
+      let pos = 'execute in ' + odc.dim + ' positioned ' + ox + ' ' + oy + ' ' + oz + ' run '
+      let doors = 0
+      ;['cw_rev_' + idName, 'cw_id_' + idName].forEach(t => {
+        try {
+          let r = Number(server.runCommandSilent(pos + 'kill @e[type=immersive_portals:portal,tag=' + t + ',distance=..48]'))
+          if (!isNaN(r)) doors += r
+        } catch (e) { console.warn('[C4] 清旧门失败 ' + t + ': ' + e) }
+      })
+      // 兜底：背后那侧的门是 IP 异步造出来的，c4MakeReverse 打 tag 时它们往往还没生成 → 没 tag，
+      // 只按 tag 杀会留下一圈"幽灵门"。这里把这个房间几何范围内、且明确不属于任何队伍
+      // （tag=!cw_rev 且 tag=!cw_id）的门一并清掉；别的队伍的门都带 tag，不会被误伤。
+      try {
+        let bx0 = b.X0 - 9, by0 = b.Y0 - 1, bz0 = b.Z0 - 9
+        let bw = (b.X1 + 9) - bx0 + 1, bh = (b.Y1 + 1) - by0 + 1, bd = (b.Z1 + 9) - bz0 + 1
+        let boxSel = 'x=' + bx0 + ',y=' + by0 + ',z=' + bz0 + ',dx=' + bw + ',dy=' + bh + ',dz=' + bd
+        let r2 = Number(server.runCommandSilent('execute in ' + odc.dim + ' run kill @e[type=immersive_portals:portal,' + boxSel + ',tag=!cw_rev,tag=!cw_id]'))
+        if (!isNaN(r2)) doors += r2
+      } catch (e) { console.warn('[C4] 清旧门兜底失败: ' + e) }
+      // ②-c 方块：逐类 replace（只替换这些方块，玩家在旧落点搭的别的东西一格都不动）
+      let blocks = [
+        'kubejs:warping_frame', 'kubejs:warping_frame_platform', 'kubejs:warping_frame_slab',
+        'kubejs:hexahedron_filling', 'minecraft:structure_void',
+        'kubejs:warping_controls', 'kubejs:warping_interface', 'kubejs:warping_interface_running',
+        'kubejs:launch_button', 'kubejs:launch_button_pressed',
+        'kubejs:warping_disc_drive', 'kubejs:warping_vent', 'minecraft:light'
+      ]
+      let w = x1 - x0 + 1, d = z1 - z0 + 1
+      let step = Math.max(1, Math.floor(30000 / Math.max(1, w * d)))   // 按 y 分片，单条不超过 32768
+      let n = 0
+      blocks.forEach(bl => {
+        for (let y = y0; y <= y1; y += step) {
+          let y2 = Math.min(y + step - 1, y1)
+          try {
+            let r = Number(server.runCommandSilent('execute in ' + odc.dim + ' run fill ' + x0 + ' ' + y + ' ' + z0 + ' ' + x1 + ' ' + y2 + ' ' + z1 + ' minecraft:air replace ' + bl))
+            if (!isNaN(r)) n += r
+          } catch (e) { console.warn('[C4] 清旧方块失败 ' + bl + ': ' + e) }
+        }
+      })
+      console.info('[C4] 清理旧落点 ' + where + ' 框架块=' + n + ' 门=' + doors + '（范围 ' + x0 + ',' + y0 + ',' + z0 + '..' + x1 + ',' + y1 + ',' + z1 + '）')
+    } catch (e) { console.warn('[C4] 清理旧落点失败: ' + e) }
+    // 释放这一步临时加的 forceload（多留 10 秒，避免区块刚清完就被卸掉）
+    server.scheduleInTicks(200, () => {
+      try { server.runCommandSilent('execute in ' + odc.dim + ' run forceload remove ' + x0 + ' ' + z0 + ' ' + x1 + ' ' + z1) } catch (e) {}
+    })
+  })
 }
 
 // ---------------------------------------------------------------------------- 事件：按钮
@@ -2324,6 +2452,9 @@ function c4CabinOkBlock(id) {
   if (!id) return true                              // 读不到（区块没加载）不误判
   if (id === 'minecraft:air' || id === 'minecraft:cave_air' || id === 'minecraft:void_air') return true
   if (id === 'minecraft:light') return true          // 房间自带隐形光源
+  // 房间自己的填充/封洞方块：早期是 kubejs:hexahedron_filling，后来改成了 minecraft:structure_void。
+  // 不在这里放行的话，任何残留的内部填充都会被当成"玩家建筑"→ 明明舱里是空的却提示先搬空。
+  if (id === 'minecraft:structure_void') return true
   if (id.indexOf('kubejs:') === 0) return true       // 框梁/地板/filling/操控台/排气孔/按钮：全是立方体自己的
   if (id.indexOf('vine') >= 0 || id.indexOf('lichen') >= 0 || id.indexOf('moss') >= 0) return true
   if (id.indexOf('grass') >= 0 || id.indexOf('fern') >= 0 || id.indexOf('flower') >= 0) return true
