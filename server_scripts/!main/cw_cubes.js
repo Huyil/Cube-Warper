@@ -288,6 +288,14 @@ function c4SlotForButton(bx, by, bz) {
     let cx = b.x + 0.5, cz = b.z - 6.5
     if (Math.abs(bx - cx) <= 8.6 && Math.abs(bz - cz) <= 8.6 && by >= b.y - 1 && by <= b.y + 15) return Number(c.slot)
   }
+  // 旧存档兜底：按钮还钉在基地 (cubeX, 98, 7) 的老位置 → 按 x 归属到那台（按下时自动迁移到 y=10）
+  if (by === C4_BASE_FLOOR + 1 && bz === Math.floor(C4_Z) + 7) {
+    for (let k in cubes) {
+      let c = cubes[k]
+      if (!c || !c.provisioned) continue
+      if (Math.abs(bx - c4CubeX(Number(c.slot))) <= 1) return Number(c.slot)
+    }
+  }
   return null
 }
 
@@ -1089,7 +1097,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       let h2 = c4TeamOfSlot(slot)
       if (h2 && h2.cube) { h2.cube.tele = { x: a.x, y: a.y, z: a.z }; c4Save() }
       c4StripCabin(server, slot, true)
-      try { c4ActivateHole(server, slot, null) } catch (eH) { console.warn('[C4] 3×3 洞自动激活失败: ' + eH) }
+      // 3×3 洞不自动生成：由玩家手持扩展器朝下右键二次确认（或 /cube admin hole）才建
       console.info('[C4] 新舱迁移完成 slot' + slot + '：传送器 @' + a.x + ',' + a.y + ',' + a.z + '（按钮 ' + a.x + ',' + (a.y + 1) + ',' + (a.z + 7) + '），基地按钮已清')
     } catch (e) { console.warn('[C4] 新舱传送器迁移失败: ' + e) }
   })
@@ -2143,6 +2151,21 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
 
   if (slot === 0) { c4Lobby(server, clicker); return }
 
+  // 旧存档过渡：这个按钮还钉在基地 (cubeX, 98, 7) → 自动执行「y=10 新建舱 + 绑定 + 去旧按钮/控制台」，
+  // 本次不跃迁（等价 /cube admin relocate），让老存档按一下按钮就完成迁移。
+  if (by === C4_BASE_FLOOR + 1 && bz === Math.floor(C4_Z) + 7) {
+    let ts = c4TeamOfSlot(slot)
+    if (ts) {
+      let nx = Math.floor(c4CubeX(slot)), ny = C4_TELE_FLOOR + 1, nz = Math.floor(C4_Z) + 7
+      console.info('[C4] 旧存档按钮迁移 slot' + slot + '：' + bx + ',' + by + ',' + bz + ' → ' + nx + ',' + ny + ',' + nz)
+      try { clicker.tell(Text.of('⟢ 旧基地按钮：正在下层 y=' + C4_TELE_FLOOR + ' 新建传送器并绑定，完成后请到新按钮再按一次')) } catch (e0) {}
+      try { c4Relocate(server, slot, nx, ny, nz) } catch (eM) { console.warn('[C4] 旧存档按钮迁移失败: ' + eM) }
+      // 老按钮/操控台钉在基地 97 层，不在 relocate 的 oldBtn 上 → 单独 strip 掉（旧存档过渡）
+      try { c4StripCabin(server, slot, true) } catch (eS) { console.warn('[C4] 旧按钮清理失败: ' + eS) }
+      return
+    }
+  }
+
   // 正在跃迁/已在队列里：直接忽略这次右键（静默，不刷聊天框）
   if (c4SlotInFlight(slot)) {
     c4BtnLog(false, clicker, slot, '该基地正在跃迁/排队中，忽略重复按下')
@@ -2798,6 +2821,12 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
       } catch (err) {}
     })
   } catch (e3) {}
+  // 旧位置的老门可能没有 cw_id_/cw_slot tag（数据包直接 cb_make_portal 建的）→ 按几何再清一次
+  try {
+    let oc = { x: c4CubeX(slot) + 0.5, y: C4_CORE_Y, z: C4_Z + 0.5 }
+    server.runCommandSilent('execute in minecraft:overworld positioned ' + oc.x + ' ' + oc.y + ' ' + oc.z
+      + ' run kill @e[type=immersive_portals:portal,distance=..40,tag=!cw_lobby,tag=!cw_link,tag=!cw_face_link,tag=!cw_face_link_base]')
+  } catch (eKillOld) {}
   // 只有新旧锚点不同才清旧家具（同一位置时不能把刚放好的擦掉）
   try {
     let same = (oldBtn.x === bx2 && oldBtn.y === by2 && oldBtn.z === bz2)
@@ -2845,9 +2874,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
       console.info('[C4] down dest=' + dd.dim + ' @' + (Number(dd.x) + 0.5) + ',' + (Number(dd.y) + 0.5) + ',' + (Number(dd.z) + 0.5))
     }
   } catch (eDD) {}
-  server.scheduleInTicks(30, () => {
-    try { c4ActivateHole(server, slot, null) } catch (eHL2) {}
-  })
+  // 3×3 洞不自动生成：搬家后保留玩家自己激活的那对门（要重建就 /cube admin hole）
   console.info('[C4] relocate 完成 slot=' + slot + ' 旧=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
     + ' → 新=' + bx2 + ',' + by2 + ',' + bz2 + ' 门=' + made + ' 旧门清=' + killed + ' link恢复=' + hadLink)
 }
@@ -4219,11 +4246,7 @@ function c4MigrateTeleporters(server) {
         } else {
           // 传送器已存在：只有和基地不同址（新布局，传送器在下面）才连通 3×3 洞；
           // 老存档 tele 还等于基地地板（97）→ 不动，等 /cube admin relocate 搬下去。
-          if (Number(c.tele.y) < 90) {
-            try { c4ActivateHole(server, slot, null) } catch (e2) { console.warn('[C4] 3×3 洞迁移失败 slot' + slot + ': ' + e2) }
-          } else {
-            console.info('[C4] slot' + slot + ' 传送器仍与基地同址（tele.y=' + c.tele.y + '）→ 等 relocate')
-          }
+          console.info('[C4] slot' + slot + ' 传送器 tele.y=' + c.tele.y + '（3×3 洞不自动生成，玩家朝下双击扩展器激活）')
         }
         c4StripCabin(server, slot, true)
       } catch (e) { console.warn('[C4] 传送器迁移失败 slot' + slot + ': ' + e) }
@@ -4500,9 +4523,8 @@ function c4ApplyExt(server, cube, ext, player, face, verb, oldExt) {
       let ext2 = c4Ext(info2 ? info2.cube : cube)
       let inside = c4CountInside(server, tp.x, tp.y, tp.z, oldExtObj)
       c4BuildRoom(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext2, false, 'shell', oldExtObj, slot)
-      // 基地扩展不碰传送器的 6 面门；3×3 洞位置不变，重连一次保证幂等
+      // 基地扩展不碰传送器的 6 面门；3×3 洞也不自动重建（玩家自己激活的那对门保持原样）
       let n = 0
-      try { n = c4ActivateHole(server, slot, null) } catch (eH) { console.warn('[C4] 扩展后 3×3 洞重连失败: ' + eH) }
       let sx = 17 + 16 * (ext2.px + ext2.nx), sz = 17 + 16 * (ext2.pz + ext2.nz), sy = 17 + 16 * ext2.py
       console.info('[C4] ' + verb + ' slot=' + slot + ' face=' + face + ' 旧ext=' + oldJson + ' 新ext=' + JSON.stringify(ext2)
         + ' 内腔方块=' + inside + '（保留） 门=' + n)
