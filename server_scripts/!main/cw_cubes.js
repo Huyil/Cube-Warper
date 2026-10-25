@@ -3498,8 +3498,8 @@ const C4_FACES = {
   e: { x: 8.50, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
   n: { x: 0.50, y: 7.50, z: -14.50, ext: 'nz', sign: -1 },
   s: { x: 0.50, y: 7.50, z: 1.50, ext: 'pz', sign: 1 },
-  d: { x: 0.50, y: -0.50, z: -6.50, ext: null, sign: 0 },
-  u: { x: 0.50, y: 15.50, z: -6.50, ext: 'py', sign: 1 }
+  d: { x: 0.50, y: -0.75, z: -6.50, ext: null, sign: 0 },   // 底面再往下 1/4 格
+  u: { x: 0.50, y: 15.75, z: -6.50, ext: 'py', sign: 1 }    // 顶面再往上 1/4 格
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
 const C4_FACE2DIR = { 'e': 'x', 'w': '-x', 's': 'z', 'n': '-z', 'u': 'y', 'd': '-y' }
