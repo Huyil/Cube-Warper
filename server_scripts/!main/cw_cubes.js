@@ -2921,6 +2921,8 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   })
   // 门洞清理会把 down/up 面整层 17×17 清掉（含地板/操控台/按钮）→ 建完门后立刻补回来
   try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e9) {}
+  // 外壳那圈 structure_void（防止透视/放置漏到结构体外）
+  try { c4ShellFill(server, dim, b, 'minecraft:structure_void') } catch (eSh2) { console.warn('[C4] relocate 外壳失败: ' + eSh2) }
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e8) {}
     try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e10) {}
