@@ -3501,13 +3501,17 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
 // 方向键：w=-x e=+x n=-z s=+z d=-y u=+y
 // 门面平面 = 框梁方块【厚度的一半】（±8.0 而不是贴外表面的 ±8.51）：
 // 面往里退半格后，门的边缘被框梁包住，从里面看不到"门边和框梁之间漏出外面"的缝。
+// 门面平面 = 立方体外表面【再往外 1/16 格】（±8.5625）。
+// 之前退到框梁中点（±8.0）时，+z 面的门面正好切在操控台那一格（z=8）里，
+// 导致那一格的运算符放不进去（IP 的跨门碰撞挡住了）。
+const C4_FACE_OUT = 8.5625
 const C4_FACES = {
-  w: { x: -7.50, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
-  e: { x: 8.50, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
-  n: { x: 0.50, y: 7.50, z: -14.50, ext: 'nz', sign: -1 },
-  s: { x: 0.50, y: 7.50, z: 1.50, ext: 'pz', sign: 1 },
-  d: { x: 0.50, y: -0.75, z: -6.50, ext: null, sign: 0 },   // 底面再往下 1/4 格
-  u: { x: 0.50, y: 15.75, z: -6.50, ext: 'py', sign: 1 }    // 顶面再往上 1/4 格
+  w: { x: -8.0625, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
+  e: { x: 9.0625, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
+  n: { x: 0.50, y: 7.50, z: -15.0625, ext: 'nz', sign: -1 },
+  s: { x: 0.50, y: 7.50, z: 2.0625, ext: 'pz', sign: 1 },
+  d: { x: 0.50, y: -1.0625, z: -6.50, ext: null, sign: 0 },
+  u: { x: 0.50, y: 16.0625, z: -6.50, ext: 'py', sign: 1 }
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
 const C4_FACE2DIR = { 'e': 'x', 'w': '-x', 's': 'z', 'n': '-z', 'u': 'y', 'd': '-y' }
@@ -4230,6 +4234,10 @@ function c4BuildTeleporter(server, slot, a, logIt) {
         + ' ' + (bb.X0 + 9) + ' ' + bb.Y0 + ' ' + (bb.Z0 + 9) + ' minecraft:air')
     } catch (eH) {}
   }
+  // 传送器也要套一圈 structure_void 外壳（原来只有程序化建舱 c4BuildRoom 会铺，
+  // 走 21³ 模板的这条路径没有 → 外观/放置会漏到结构体外）
+  try { c4ShellFill(server, 'minecraft:overworld', bb, 'minecraft:structure_void') }
+  catch (eSh) { console.warn('[C4] 传送器外壳填充失败: ' + eSh) }
   // 基地不再持有 6 面门：先清旧位置（基地核心）附近的门，再在传送器核心整组重建
   try {
     let bc0 = c4BaseCore(slot)
