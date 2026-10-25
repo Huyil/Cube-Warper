@@ -2509,6 +2509,24 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
             return 1
           }))))))
 
+  // 调试：/cube admin ipcfg on —— 打开 IP looseMovementCheck（root 配置文件，靠服务端进程写）
+  root.then(cmdRoot.literal('ipcfg').requires(src => src.hasPermission(4))
+    .then(cmdRoot.literal('on').executes(ctx => {
+      try {
+        let FileCls = Java.loadClass('java.io.File')
+        let FilesCls = Java.loadClass('java.nio.file.Files')
+        let CharsetCls = Java.loadClass('java.nio.charset.StandardCharsets')
+        let f = new FileCls('config/immersive_portals.json')
+        let txt = String(FilesCls.readString(f.toPath(), CharsetCls.UTF_8))
+        let obj = JSON.parse(txt)
+        obj.looseMovementCheck = true
+        FilesCls.writeString(f.toPath(), JSON.stringify(obj, null, 2), CharsetCls.UTF_8)
+        console.info('[C4] ipcfg: looseMovementCheck=true 已写入（需重启生效）')
+        c4Reply(ctx, 'ipcfg: looseMovementCheck=true 已写入（重启后生效）')
+      } catch (e) { console.warn('[C4] ipcfg 失败: ' + e); c4Reply(ctx, 'ipcfg 失败: ' + e) }
+      return 1
+    })))
+
   // 调试：/cube admin hole <slot> —— 直接激活 3×3 基地门（等价朝下双击）
   root.then(cmdRoot.literal('hole').requires(src => src.hasPermission(4))
     .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
@@ -2722,8 +2740,11 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
     c4Flag2Fill(lvOw2, XA - 2, YA - 2, ZB + 1, XB + 2, YB + 2, ZB + 2, 'minecraft:air')
     console.info('[C4] 密封外箱=建成 壳内空腔=清空 shell=' + shellN + ' water=0')
   }
-  // ① 贴模板（原点=最小角；模板自带框梁笼子/地板/中心 3×3 洞/7 个通风口/按钮/操控台）
-  run('place template hexahedron:cw_teleporter ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0)
+  // ① 先清 21×21×21 为 air，再把 17³ 模板放到 -2 偏移（等价“21³ 立方体居中”）
+  if (lvOw2) {
+    c4Flag2Fill(lvOw2, b.X0 - 2, b.Y0 - 2, b.Z0 - 2, b.X1 + 2, b.Y1 + 2, b.Z1 + 2, 'minecraft:air')
+  }
+  run('place template hexahedron:cw_teleporter ' + (b.X0 - 2) + ' ' + (b.Y0 - 2) + ' ' + (b.Z0 - 2))
   // ② 中心 3×3 洞保持 air（默认通向下方的 17×17 跃迁门）
   let FXh = Math.floor(cx), FZh = Math.floor(cz)
   try {
@@ -2785,6 +2806,18 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e8) {}
     try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e10) {}
   })
+  // down 门 destination 对齐库里 dests（防止沿用过期落点）
+  try {
+    let seedD = 0
+    try { seedD = c4ReadSeed(server, slot) } catch (eS) { seedD = 0 }
+    let dd = c4DestOf(info.cube, C4_SEED_DIMS[seedD] || C4_SEED_DIMS[0])
+    if (dd) {
+      server.runCommandSilent('execute in minecraft:overworld positioned ' + tp.x + ' ' + tp.y + ' ' + tp.z
+        + ' run data merge entity @e[type=immersive_portals:portal,tag=cw_face_down,distance=..12,limit=1] '
+        + '{destinationX:' + (Number(dd.x) + 0.5) + 'd,destinationY:' + (Number(dd.y) + 0.5) + 'd,destinationZ:' + (Number(dd.z) + 0.5) + 'd,dimensionTo:"' + String(dd.dim) + '"}')
+      console.info('[C4] down dest=' + dd.dim + ' @' + (Number(dd.x) + 0.5) + ',' + (Number(dd.y) + 0.5) + ',' + (Number(dd.z) + 0.5))
+    }
+  } catch (eDD) {}
   server.scheduleInTicks(30, () => {
     try { if (hadLink) c4ActivateHole(server, slot, null) } catch (eHL2) {}
   })
@@ -3350,7 +3383,7 @@ const C4_FACES = {
   e: { x: 8.94, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
   n: { x: 0.50, y: 7.50, z: -14.94, ext: 'nz', sign: -1 },
   s: { x: 0.50, y: 7.50, z: 1.94, ext: 'pz', sign: 1 },
-  d: { x: 0.50, y: -1.44, z: -6.50, ext: null, sign: 0 },
+  d: { x: 0.50, y: -1.60, z: -6.50, ext: null, sign: 0 },
   u: { x: 0.50, y: 15.94, z: -6.50, ext: 'py', sign: 1 }
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
@@ -4463,7 +4496,7 @@ function c4ActivateHole(server, slot, player) {
     // 先清掉旧的 3×3 基地门（重复激活不叠加）
     try { server.runCommandSilent('execute in minecraft:overworld positioned ' + (FX + 0.5) + ' ' + (Y0 + 0.5) + ' ' + (FZ + 0.5) + ' run kill @e[type=immersive_portals:portal,tag=cw_face_link,distance=..15]') } catch (eKill) {}
     // 在 y=Y0-0.05 新建独立 3×3 门（下方 17×17 门在 Y0-0.44）
-    let px = FX + 0.5, py = Y0 + 0.75, pz = FZ + 0.5
+    let px = FX + 0.5, py = Y0 + 0.4, pz = FZ + 0.5
     let mk = 'c4hole' + slot + Date.now()
     try {
       server.runCommandSilent('execute in minecraft:overworld positioned ' + px + ' ' + py + ' ' + pz
@@ -4482,7 +4515,7 @@ function c4ActivateHole(server, slot, player) {
       // 防止误标到 down 门
       server.runCommandSilent('execute in minecraft:overworld run tag @e[type=immersive_portals:portal,tag=cw_face_down] remove cw_face_link')
       // 目的地 = 基地（基地核心 = slot*4000+8.5, 99, 0.5；基地地板洞上方 2 格）
-      let bx = slot * 4000 + 8.5, by = 99.0, bz = 0.5
+      let bx = slot * 4000 + 8.5, by = 112.0, bz = 0.5
       server.runCommandSilent('execute in minecraft:overworld positioned ' + px + ' ' + py + ' ' + pz
         + ' run data merge entity @e[type=immersive_portals:portal,tag=cw_face_link,distance=..0.2,limit=1] '
         + '{destinationX:' + bx + 'd,destinationY:' + by + 'd,destinationZ:' + bz + 'd,dimensionTo:"minecraft:overworld"}')
@@ -4552,6 +4585,9 @@ function c4ToolUse(event, reduce) {
 }
 
 ItemEvents.rightClicked('kubejs:cube_expander', event => c4ToolUse(event, false))
+
+
+
 ItemEvents.rightClicked('kubejs:cube_reducer', event => c4ToolUse(event, true))
 
 // 没有基地的玩家（含新出生）：直接送进基岩维度 0,0 的出生笼子，走到配给台按按钮领基地
