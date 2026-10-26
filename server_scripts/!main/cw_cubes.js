@@ -845,6 +845,18 @@ function c4Seat(slot, i, n) {
   let a = (2 * C4_PI * i) / n - C4_PI / 2
   return { x: cx + Math.cos(a) * r, y: by + 0.5, z: cz + Math.sin(a) * r }
 }
+// 家（/cube home）落点：传送器按钮正前方 3 格、离地 1 格（脚踩地板，y = 地板方块 +1）。
+// 按钮统一 facing=north（各处 setblock 都是 north），玩家按它时站在 -z 一侧 → 「前方」= -z。
+// 用按钮派生而不是基地锚点：传送器搬下去（旧存档迁移 / relocate）后自动跟着走。
+// 没登记 btn 的（旧存档还没按按钮迁移的 13 台）保持原行为回基地，避免把人丢进还没建好的 y=10 空腔。
+function c4HomeSeat(slot) {
+  let h = null
+  try { h = c4TeamOfSlot(slot) } catch (e) { h = null }
+  let b = h && h.cube && h.cube.btn
+  if (!b || b.x === undefined || b.y === undefined || b.z === undefined) return c4BaseSeat(slot, 0, 1)
+  let bp = c4BtnPos(slot)
+  return { x: bp.x + 0.5, y: bp.y, z: bp.z - 3.0 + 0.5 }
+}
 function c4BaseSeat(slot, i, n) {
   let a = c4BaseAnchor(slot)
   let cx = a.x + 0.5, cz = a.z + 0.5
@@ -2776,7 +2788,7 @@ function c4CmdHome(ctx) {
   let cube = key ? c4CubeOfTeam(key) : null
   if (!cube) { c4ReplyT(ctx, 'cw.home.no_cube', [c4TeamLabel(t)]); return }
   if (!cube.provisioned) { c4ReplyT(ctx, 'cw.home.not_ready'); return }
-  let s = c4BaseSeat(cube.slot, 0, 1)
+  let s = c4HomeSeat(cube.slot)
   if (c4Tp(ctx.source.server, p, 'minecraft:overworld', s.x, s.y, s.z)) c4ReplyT(ctx, 'cw.home.ok', [cube.name])
   else c4ReplyT(ctx, 'cw.home.fail')
 }
@@ -2784,7 +2796,7 @@ function c4CmdHome(ctx) {
 function c4CmdHomeSlot(ctx, slot) {
   let p = c4SrcPlayer(ctx)
   if (!p) { c4ReplyT(ctx, 'cw.cmd.need_player'); return }
-  let s = c4BaseSeat(slot, 0, 1)
+  let s = c4HomeSeat(slot)
   if (c4Tp(ctx.source.server, p, 'minecraft:overworld', s.x, s.y, s.z)) c4ReplyT(ctx, 'cw.cmd.tp_ok', [])
   else c4ReplyT(ctx, 'cw.cmd.tp_fail')
 }
