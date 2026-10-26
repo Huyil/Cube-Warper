@@ -3930,7 +3930,7 @@ ServerEvents.loaded(event => {
 })
 
 // ---------------------------------------------------------------------------- 扩展器 / 拆除器（实现在 cw_expand.js）
-function c4ExpandDeny(p, msg) { try { p.tell(Text.of('⟢ ' + msg)) } catch (e) {} }
+function c4ExpandDeny(p, msg) { try { p.displayClientMessage(Text.of('⟢ ' + msg), true) } catch (e) { try { p.tell(Text.of('⟢ ' + msg)) } catch (e2) {} } }
 
 
 // 优先【搬门】而不是删了重建：保留 entity 与目的地，只改位置/尺寸
@@ -4485,14 +4485,14 @@ function c4ActivateHole(server, slot, player) {
         + (px0 + 1) + ' ' + pipeTop + ' ' + (pz0 + 1) + ' minecraft:glass')
       console.info('[C4] 隧道玻璃盖（传送仓洞口下 1 格）：' + px0 + ',' + pipeTop + ',' + pz0 + ' 3×3')
     } catch (eGl) { console.warn('[C4] 传送仓玻璃盖失败: ' + eGl) }
-    // ③.7 管道里的两扇 3×3（绕过 6 面门里的 up/down 面门）：
-    //   cw_pipe_up  ：管道顶端下一格（178.5），法向 -Y → 从下往上飞的先撞它 → 落舱内地板（洞口 -x 2 格）
-    //   cw_pipe_down：管道底端上一格（114.5），法向 +Y → 从上往下掉的先撞它 → 落基地地板（洞口 -x 2 格）
+    // ③.7 上下互通的两扇 3×3：
+    //   下行：舱地板洞 tel.y+0.5（rot +90，从上往下）→ 基地地板洞口旁
+    //   上行：基地底面 17×17 down 门下方 bas.y-0.5（rot -90，从下往上）→ 舱内地板
+    let okP1 = false, okP2 = false
     try {
-      let pUpY = pipeTop - 0.5, pDownY = pipeBot + 0.5
-      let P1 = c4SpawnLinkPortal(server, { x: tx, y: pUpY, z: tz }, 3, -90)
-      let P2 = c4SpawnLinkPortal(server, { x: bx, y: pDownY, z: bz }, 3, 90)
-      let aimPipe = (e, tag, dx, dy, dz) => {
+      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.5, z: tz }, 3, 90)
+      let Pup = c4SpawnLinkPortal(server, { x: bx, y: bas.y - 0.5, z: bz }, 3, -90)
+      let aimP = (e, tag, dx, dy, dz) => {
         if (!e) return false
         try { e.addTag('cw_link'); e.addTag('cw_pipe'); e.addTag(tag); e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId); e.addTag(c4TeamTagOf(slot)) } catch (e0) {}
         let ok = false
@@ -4501,13 +4501,11 @@ function c4ActivateHole(server, slot, player) {
         try { c4Sync(e) } catch (e3) {}
         return ok
       }
-      // 落点 y = 地板方块 + 2（站面之上 1 格）：既不会卡在门面/地板里（IP 的安全检查会拒绝传送），
-      // 又只摔 1 格（无摔落伤害）。设计文档实测结论：3×3 link 落点应为「地板上方 1 格」。
-      let okP1 = aimPipe(P1, 'cw_pipe_up', tx - 2.0, tel.y + 4.0, tz)      // 舱内地板、洞口 -x 2 格
-      let okP2 = aimPipe(P2, 'cw_pipe_down', bx - 2.0, baseFloor + 2.0, bz) // 基地地板（向下扩建后跟着下移）、洞口 -x 2 格
-      console.info('[C4] 管道双门 slot=' + slot + ' P_up@y' + pUpY + '→舱内' + (okP1 ? ' OK' : ' 失败')
-        + ' / P_down@y' + pDownY + '→基地' + (okP2 ? ' OK' : ' 失败'))
-    } catch (ePipe2) { console.warn('[C4] 管道双门失败: ' + ePipe2) }
+      okP1 = aimP(Pdown, 'cw_pipe_down', bx + 2.0, baseFloor + 2.0, bz)
+      okP2 = aimP(Pup, 'cw_pipe_up', tx + 2.0, tel.y + 4.0, tz)
+      console.info('[C4] 上下互通 slot=' + slot + ' 下行@' + (tel.y + 0.5) + (okP1 ? ' OK' : ' 失败')
+        + ' / 上行@' + (bas.y - 0.5) + (okP2 ? ' OK' : ' 失败'))
+    } catch (ePipe2) { console.warn('[C4] 上下互通门失败: ' + ePipe2) }
 
     // ④ 两扇主门（cb_make_portal 直接生成，无反向门）
     //    A 基地→舱（上行）：法向 -Y（rot [0,-90]，从下往上穿）；门面在天花板洞内 113.2
