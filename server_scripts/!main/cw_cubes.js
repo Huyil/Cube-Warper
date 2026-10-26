@@ -4490,8 +4490,8 @@ function c4ActivateHole(server, slot, player) {
     //   上行：基地底面 17×17 down 门下方 bas.y-0.5（rot -90，从下往上）→ 舱内地板
     let okP1 = false, okP2 = false
     try {
-      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.5, z: tz }, 3, 90)
-      let Pup = c4SpawnLinkPortal(server, { x: bx, y: bas.y - 0.5, z: bz }, 3, -90)
+      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 1.5, z: tz }, 3, 90)
+      let Pup = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 16.5, z: bz }, 3, -90)
       let aimP = (e, tag, dx, dy, dz) => {
         if (!e) return false
         try { e.addTag('cw_link'); e.addTag('cw_pipe'); e.addTag(tag); e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId); e.addTag(c4TeamTagOf(slot)) } catch (e0) {}
@@ -4504,7 +4504,7 @@ function c4ActivateHole(server, slot, player) {
       okP1 = aimP(Pdown, 'cw_pipe_down', bx + 2.0, baseFloor + 2.0, bz)
       okP2 = aimP(Pup, 'cw_pipe_up', tx + 2.0, tel.y + 4.0, tz)
       console.info('[C4] 上下互通 slot=' + slot + ' 下行@' + (tel.y + 0.5) + (okP1 ? ' OK' : ' 失败')
-        + ' / 上行@' + (bas.y - 0.5) + (okP2 ? ' OK' : ' 失败'))
+        + ' / 上行@' + (bas.y + 16.5) + (okP2 ? ' OK' : ' 失败'))
     } catch (ePipe2) { console.warn('[C4] 上下互通门失败: ' + ePipe2) }
 
     // ④ 两扇主门（cb_make_portal 直接生成，无反向门）
