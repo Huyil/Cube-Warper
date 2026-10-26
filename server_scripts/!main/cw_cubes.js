@@ -86,6 +86,7 @@ function c4Cls(name) {
   return C4_J[name]
 }
 function c4Iat() { return c4Cls('com.mojang.brigadier.arguments.IntegerArgumentType') }
+function c4Vec(x, y, z) { return new (c4Cls('net.minecraft.world.phys.Vec3'))(x, y, z) }
 function c4PortalAPI() { return c4Cls('qouteall.imm_ptl.core.api.PortalAPI') }
 function c4Rl(id) {
   if (!C4_RL) C4_RL = c4Cls('net.minecraft.resources.ResourceLocation')
@@ -998,6 +999,11 @@ function c4ProvisionBody(server, slot, teamName, idName) {
 
   // 1) 外壳/地板/面板/按钮/排气口（在刚清空的体积里重建；17x17 里的 structure_void 只补地板 3×3 洞）
   server.runCommandSilent(`execute positioned ${x} ${C4_BASE_Y} ${C4_Z} run function hexahedron:build_hexahedron/17x17`)
+  // 1.4) 隐藏光源（基地这间也要，否则对比目的地副本会明显偏暗）
+  try {
+    server.runCommandSilent('execute in minecraft:overworld run setblock ' + x + ' ' + (Math.round(C4_BASE_Y) - 5 + 8) + ' ' + C4_Z + ' minecraft:light[level=15]')
+    console.info('[C4] 基地隐藏光源 @' + x + ',' + (Math.round(C4_BASE_Y) - 5 + 8) + ',' + C4_Z)
+  } catch (eL) {}
   // 1.5) 把 3×3 地板洞下方那格 structure_void 之外的残余再清一次内部（保险）
   server.runCommandSilent(`execute in minecraft:overworld positioned ${x} ${C4_BASE_Y} ${C4_Z} run fill ~-7 ~-2 ~-7 ~7 ~12 ~7 air replace minecraft:structure_void`)
   // 1.6) 外壳（贴着框梁外表面那一格）整体替换成 structure_void —— 与 c4BuildRoom(false) 同一套几何，
@@ -2442,19 +2448,6 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   // /cwp spawn · /cube spawn：回到出生点（基岩 0,0 的出生笼子）
   root.then(cmdRoot.literal('spawn').executes(ctx => { c4CmdSpawn(ctx); return 1 }))
 
-  // 扩建：实现在 cw_expand.js，命令树只留挂载点（root 级、权限 4）
-  // /cube expand <slot> <px|nx|pz|nz|py>
-  root.then(cmdRoot.literal('expand').requires(src => src.hasPermission(4))
-    .then(cmdRoot.argument('slot', IAT.integer(0))
-      .then(cmdRoot.literal('px').executes(ctx => { c4CweExpand(ctx, 'px'); return 1 }))
-      .then(cmdRoot.literal('nx').executes(ctx => { c4CweExpand(ctx, 'nx'); return 1 }))
-      .then(cmdRoot.literal('pz').executes(ctx => { c4CweExpand(ctx, 'pz'); return 1 }))
-      .then(cmdRoot.literal('nz').executes(ctx => { c4CweExpand(ctx, 'nz'); return 1 }))
-      .then(cmdRoot.literal('py').executes(ctx => { c4CweExpand(ctx, 'py'); return 1 }))))
-
-  // /cube rebuild <slot>（root 级，不是 admin）：按 cells 重算外边界，幂等自愈
-  root.then(cmdRoot.literal('rebuild').requires(src => src.hasPermission(4))
-    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => { c4CweRebuild(ctx); return 1 })))
   // 管理命令统一挂到 /cube admin（权限 4）；root 重新指向 admin 后，
   // 下面所有 root.then(...) 都会注册到 admin 子树里。
   let cubeRoot = root
@@ -2537,6 +2530,10 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
         .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'nz', true); return 1 })))
       .then(cmdRoot.literal('pz').executes(ctx => { c4CweExpand(ctx, 'pz'); return 1 })
         .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'pz', true); return 1 })))))
+
+  // /cube admin rebuild <slot>：按当前 cells 重算外边界（地板/框梁/屏障/灯），幂等自愈
+  root.then(cmdRoot.literal('rebuild').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => { c4CweRebuild(ctx); return 1 })))
 
   root.then(cmdRoot.literal('flush').requires(src => src.hasPermission(2)).executes(ctx => {
     C4_Q = []; C4_BUSY = null
@@ -3019,9 +3016,23 @@ function c4CmdDoors(ctx, slot) {
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
   })
-  // 反向门尺寸是从正向门复制的：正向门重建后必须一起重建，否则反向门还是旧尺寸
+  // 反向门尺寸是从正向门复制的：正向门重建后必须一起重建，否则反向门还是旧尺寸。
+  // 另外要把【历史目的地】上的旧反向门也清掉（几何改过好几轮，那些是 17×17/8.51 的残留）。
   server.scheduleInTicks(30, () => {
     try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) } catch (e6) { console.warn('[C4] doors 反向门失败: ' + e6) }
+    try {
+      let ds = (h.cube && h.cube.dests) || {}
+      for (let dk in ds) {
+        let de = ds[dk]
+        if (!de || de.x === undefined) continue
+        if (String(dk) === String(rDimId)) continue
+        try {
+          server.runCommandSilent('execute in ' + dk + ' positioned ' + (Number(de.x) + 0.5) + ' ' + (Number(de.y) + 0.5) + ' ' + (Number(de.z) + 0.5)
+            + ' run kill @e[type=immersive_portals:portal,name=!main_cube,distance=..100]')
+          console.info('[C4] 清理历史反向门 slot=' + slot + ' dim=' + dk + ' @' + de.x + ',' + de.y + ',' + de.z)
+        } catch (e7) {}
+      }
+    } catch (e8) {}
   })
   console.info('[C4] /cwp doors ' + slot + ' ext=' + JSON.stringify(ext) + ' 预载=' + chunks + ' chunks 清旧门=' + killed + ' 重建=' + made + ' 指向=' + aimed)
   c4Reply(ctx, '槽位 ' + slot + ' 门重建：清 ' + killed + ' / 建 ' + made + ' / 指 ' + aimed + '（ext=' + JSON.stringify(ext) + '）')
@@ -3320,10 +3331,12 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     run(`fill ${b.X0 + 1} ${b.Y1} ${b.Z0 + 1} ${b.X1 - 1} ${b.Y1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
   }
   // 外壳（贴着框梁外表面的那一格，6 面 + 12 棱 + 8 角）：
-  //   主世界 → 整体替换成 structure_void（不是只填空气，门边就不会和框梁 z-fighting）
-  //   目的地 → 整体清成 air（不放 filling）
-  try { c4ShellFill(server, dimId, b, fillHole ? 'minecraft:air' : 'minecraft:structure_void') }
-  catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
+  //   主世界 → structure_void（不是只填空气，门边不会和框梁 z-fighting）
+  //   目的地 → 不再铺 air 外壳：目的地副本就是纯净 17³（少一圈 19³ 的挖掘，省事也省性能）
+  if (!fillHole) {
+    try { c4ShellFill(server, dimId, b, 'minecraft:structure_void') }
+    catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
+  }
   return b
 }
 // 6 扇门：位置/尺寸都按当前 ext 算（矩形门）
@@ -3336,13 +3349,17 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
 // 门面平面 = 立方体外表面【再往外 1/16 格】（±8.5625）。
 // 之前退到框梁中点（±8.0）时，+z 面的门面正好切在操控台那一格（z=8）里，
 // 导致那一格的运算符放不进去（IP 的跨门碰撞挡住了）。
+// 四面统一：门面 = 立方体外表面【再往外 1/16】（±8.5625）＝「内 15/16、外 1/16」
+// 侧面：门面 = 立方体【外表面往内 1/16 格】（核心 ±8.4375）。
+// 这样 15×15 的门边正好落在框梁内侧面，且往内退 1/16 → 斜看时射线先撞到框梁内侧面，
+// 不会从门边缝里看到主世界外部；来源门与反向门用同一张表 → 两侧严格对齐。
 const C4_FACES = {
-  w: { x: -8.0625, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
-  e: { x: 9.0625, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
-  n: { x: 0.50, y: 7.50, z: -15.0625, ext: 'nz', sign: -1 },
-  s: { x: 0.50, y: 7.50, z: 2.0625, ext: 'pz', sign: 1 },
-  d: { x: 0.50, y: -1.0625, z: -6.50, ext: null, sign: 0 },
-  u: { x: 0.50, y: 16.0625, z: -6.50, ext: 'py', sign: 1 }
+  w: { x: -7.9375, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
+  e: { x: 8.9375, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
+  n: { x: 0.50, y: 7.50, z: -14.9375, ext: 'nz', sign: -1 },
+  s: { x: 0.50, y: 7.50, z: 1.9375, ext: 'pz', sign: 1 },
+  d: { x: 0.50, y: -0.75, z: -6.50, ext: null, sign: 0 },
+  u: { x: 0.50, y: 15.75, z: -6.50, ext: 'py', sign: 1 }
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
 // 核心 → 按钮方块坐标（表以按钮为基准）
@@ -4253,11 +4270,12 @@ function c4ActivateHole(server, slot, player) {
     }
     // 落点 = 地板上 4 格 + 横向让开洞口 2 格（-z 一侧）：
     //   洞口半径 1.5（3×3）+ 玩家半宽 0.3 → 至少让开 1.8 才不会一落地又掉回去；2 格是贴边值。
-    let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz)   // 基地 → 传送器（洞中心正下方，不错位）
-    let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz)     // 传送器 → 基地（洞中心正下方，不错位）
+    // 出口改到各自目标房间的【天花板下 0.5 格】（tel/bas 底面 +16.5 = 天花板平面 -0.5）
+    let okA = aim(A, 'cw_link_down', tx, tel.y + 16.5, tz)   // 基地 → 传送器天花板
+    let okB = aim(B, 'cw_link_up', bx, bas.y + 16.5, bz)     // 传送器 → 基地天花板
     console.info('[C4] 隧道 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → ' + tx + ',' + (tel.y + 5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + ' → ' + bx + ',' + (bas.y + 5) + ',' + bz + (okB ? ' OK' : ' 失败')
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → ' + tx + ',' + (tel.y + 16.5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + ' → ' + bx + ',' + (bas.y + 16.5) + ',' + bz + (okB ? ' OK' : ' 失败')
       + '（两洞已盖 3×3 玻璃）')
     try { c4BarTeam(server, slot, '隧道: 基地 ↔ 传送器 已连通') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
