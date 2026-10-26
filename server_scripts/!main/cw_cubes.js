@@ -4490,7 +4490,7 @@ function c4ActivateHole(server, slot, player) {
     //   上行：基地底面 17×17 down 门下方 bas.y-0.5（rot -90，从下往上）→ 舱内地板
     let okP1 = false, okP2 = false
     try {
-      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y - 0.1, z: tz }, 3, 90)
+      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.9, z: tz }, 3, 90)
       let Pup = c4SpawnLinkPortal(server, { x: bx, y: tel.y - 1.1, z: bz }, 3, -90)
       let aimP = (e, tag, dx, dy, dz) => {
         if (!e) return false
@@ -4515,7 +4515,8 @@ function c4ActivateHole(server, slot, player) {
     //   站在基地里仰视天花板洞 → 只建基地侧那一扇（A）
     //   站在传送仓里俯视地板洞   → 只建舱侧那一扇（B）
     //   管理员命令（player=null）→ 两侧都建
-    let wantBase = true, wantTele = true
+    // 上下互通完全交给管道里的两扇 3×3；不再建 A/B（B 会多出第 3 扇门）
+    let wantBase = false, wantTele = false
     if (player) {
       let near = (cx, cz, yLo, yHi) => {
         let dx = player.x - cx, dz = player.z - cz
@@ -4523,8 +4524,7 @@ function c4ActivateHole(server, slot, player) {
       }
       let nb = near(bx, bz, bas.y - 1, baseCeil + 1)
       let nt = near(tx, tz, tel.y - 1, tel.y + 17)
-      if (nb || nt) { wantBase = false; wantTele = true }   // 永远不建基地侧 A 门（会把玩家送出立方体外）
-      else { wantBase = false; wantTele = true }
+      wantBase = false; wantTele = false
       console.info('[C4] 隧道激活定位：base=' + nb + ' tele=' + nt + ' → 建 ' + (wantBase ? 'A ' : '') + (wantTele ? 'B' : ''))
     }
     let A = wantBase ? c4SpawnLinkPortal(server, { x: bx, y: baseHoleY, z: bz }, 3, -90) : null
