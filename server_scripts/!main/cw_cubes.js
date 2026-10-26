@@ -1097,7 +1097,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   //      17x17 只负责房间内部，外层在这里补，门边才不会和框梁 z-fighting。
   if (Number(slot) > 0) {
     try {
-      c4ShellFill(server, 'minecraft:overworld', c4RoomBox(x + 0.5, C4_CORE_Y, C4_Z + 0.5, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'minecraft:structure_void')
+      c4ShellFill(server, 'minecraft:overworld', c4RoomBox(x + 0.5, C4_CORE_Y, C4_Z + 0.5, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'minecraft:air')
       console.info('[C4] 槽位 ' + slot + ' 外壳 filling 已铺')
     } catch (e) { console.warn('[C4] 外壳 filling 失败: ' + e) }
   }
@@ -1536,7 +1536,7 @@ function c4DestRoomExists(server, d) {
     let airOk = 0
     for (let dy = 1; dy <= 3; dy++) {
       let id = bl(x, y + dy, z)
-      if (id === 'minecraft:air' || id === 'minecraft:structure_void' || id === 'minecraft:cave_air') airOk++
+      if (id === 'minecraft:air' || id === 'minecraft:air' || id === 'minecraft:cave_air') airOk++
     }
     if (airOk < 2) return false
     return true
@@ -2201,7 +2201,7 @@ function c4CleanOldDest(server, slot, job) {
       // ②-c 方块：逐类 replace（只替换这些方块，玩家在旧落点搭的别的东西一格都不动）
       let blocks = [
         'kubejs:warping_frame', 'kubejs:warping_frame_platform', 'kubejs:warping_frame_slab',
-        'kubejs:hexahedron_filling', 'minecraft:structure_void',
+        'kubejs:hexahedron_filling', 'minecraft:air',
         'kubejs:warping_controls', 'kubejs:warping_interface', 'kubejs:warping_interface_running',
         'kubejs:launch_button', 'kubejs:launch_button_pressed',
         'kubejs:warping_disc_drive', 'kubejs:warping_vent', 'minecraft:light'
@@ -3025,7 +3025,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   // 门洞清理会把 down/up 面整层 17×17 清掉（含地板/操控台/按钮）→ 建完门后立刻补回来
   try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e9) {}
   // 外壳那圈 structure_void（防止透视/放置漏到结构体外）
-  try { c4ShellFill(server, dim, b, 'minecraft:structure_void') } catch (eSh2) { console.warn('[C4] relocate 外壳失败: ' + eSh2) }
+  try { c4ShellFill(server, dim, b, 'minecraft:air') } catch (eSh2) { console.warn('[C4] relocate 外壳失败: ' + eSh2) }
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e8) {}
     try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e10) {}
@@ -3463,7 +3463,7 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   }
   // 目的地那一侧必须把 3×3 洞口封上（原包用 filling，这里用 structure_void）：否则从天花板落进来的人
   // 会继续穿过地板洞 → 反向门 → 又被送回起点，形成"一直下落"的死循环。起飞侧保持洞口敞开。
-  if (fillHole) run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} minecraft:structure_void`)
+  if (fillHole) run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} minecraft:air`)
   else run(`fill ${FX - 1} ${b.Y0} ${FZ - 1} ${FX + 1} ${b.Y0} ${FZ + 1} minecraft:air`)
   run(`fill ${b.X0} ${b.Y1} ${b.Z0} ${b.X1} ${b.Y1} ${b.Z0} kubejs:warping_frame`)
   run(`fill ${b.X0} ${b.Y1} ${b.Z1} ${b.X1} ${b.Y1} ${b.Z1} kubejs:warping_frame`)
@@ -3511,17 +3511,17 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   } catch (e) {}
   if (fillHole) {
     // 目的地：内侧墙面只把框梁之间的空气补成 filling（不动框梁/地板/面板/门）
-    run(`fill ${b.X1} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X1} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
-    run(`fill ${b.X0} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X0} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
-    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z1} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z1} minecraft:structure_void replace minecraft:air`)
-    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z0} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z0} minecraft:structure_void replace minecraft:air`)
-    run(`fill ${b.X0 + 1} ${b.Y1} ${b.Z0 + 1} ${b.X1 - 1} ${b.Y1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
+    run(`fill ${b.X1} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X1} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:air replace minecraft:air`)
+    run(`fill ${b.X0} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X0} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:air replace minecraft:air`)
+    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z1} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z1} minecraft:air replace minecraft:air`)
+    run(`fill ${b.X0 + 1} ${b.Y0 + 1} ${b.Z0} ${b.X1 - 1} ${b.Y1 - 1} ${b.Z0} minecraft:air replace minecraft:air`)
+    run(`fill ${b.X0 + 1} ${b.Y1} ${b.Z0 + 1} ${b.X1 - 1} ${b.Y1} ${b.Z1 - 1} minecraft:air replace minecraft:air`)
   }
   // 外壳（贴着框梁外表面的那一格，6 面 + 12 棱 + 8 角）：
   //   主世界 → structure_void（不是只填空气，门边不会和框梁 z-fighting）
   //   目的地 → 不再铺 air 外壳：目的地副本就是纯净 17³（少一圈 19³ 的挖掘，省事也省性能）
   if (!fillHole) {
-    try { c4ShellFill(server, dimId, b, 'minecraft:structure_void') }
+    try { c4ShellFill(server, dimId, b, 'minecraft:air') }
     catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
   }
   return b
@@ -4051,7 +4051,7 @@ function c4CmdRetargetFace(ctx, slot, faceArg, dimId) {
 // ════════════════════════════════════════════════════════════════════════════
 const C4_TELE_BLOCKS = [
   'kubejs:warping_frame', 'kubejs:warping_frame_platform', 'kubejs:warping_frame_slab',
-  'kubejs:hexahedron_filling', 'minecraft:structure_void',
+  'kubejs:hexahedron_filling', 'minecraft:air',
   'kubejs:warping_controls', 'kubejs:warping_interface', 'kubejs:warping_interface_running',
   'kubejs:launch_button', 'kubejs:launch_button_pressed',
   'kubejs:warping_disc_drive', 'kubejs:warping_vent', 'minecraft:light'
@@ -4136,7 +4136,7 @@ function c4BuildTeleporter(server, slot, a, logIt) {
     let bas = c4BaseAnchor(slot)
     let basTop = bas.y + 16
     let overlap = !(bb.Y1 + 1 < bas.y || bb.Y0 - 1 > basTop)
-    if (!overlap) c4ShellFill(server, 'minecraft:overworld', bb, 'minecraft:structure_void')
+    if (!overlap) c4ShellFill(server, 'minecraft:overworld', bb, 'minecraft:air')
     else console.info('[C4] 传送器与基地盒重叠/贴身（舱 Y ' + bb.Y0 + '..' + bb.Y1 + ' vs 基地 ' + bas.y + '..' + basTop + '）→ 跳过外壳')
   } catch (eSh) { console.warn('[C4] 传送器外壳填充失败: ' + eSh) }
   // 基地不再持有 6 面门：先清旧位置（基地核心）附近的门，再在传送器核心整组重建
