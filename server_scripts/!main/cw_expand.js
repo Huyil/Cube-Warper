@@ -20,11 +20,12 @@ function c4Cwc() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 格子化扩建（横向，无上限）
+// 格子化扩建（横向 ±x/±z + 向下 ny，无上限；2026-10 起禁用向上 py）
 //   每格 16 深 × 17 高 × 16 宽（相邻格共享 1 格边框：17 = 16+1）
-//   cells 存在 cube.cells：["0,0,0", "1,0,0", ...]（相对基地原点的格坐标）
+//   cells 存在 cube.cells：["0,0,0", "1,0,0", "0,-1,0", ...]（相对基地原点的格坐标）
 //   只建【并集的外边界】：地板、外墙屏障、外框梁、外面那圈 structure_void；
 //   相邻格之间的旧边框在新增时被清掉，内部保持连通。
+//   向下 ny：共享层 = 新格顶面（旧格地板），Y0 下移 16、Y1 不变；目标格是地形 → 直接挖空内部。
 // ════════════════════════════════════════════════════════════════════════════
 const C4_CELL = 16
 function c4CellKey(gx, gy, gz) { return gx + ',' + gy + ',' + gz }
@@ -78,11 +79,12 @@ function c4RebuildCells(server, cube) {
   let u = c4CellUnion(slot, keys)
   // 先把并集范围 forceload（否则超出范围的 fill 会静默失败——地板不铺、屏障不刷）
   try { run('forceload add ' + (u.X0 - 16) + ' ' + (u.Z0 - 16) + ' ' + (u.X1 + 16) + ' ' + (u.Z1 + 16)) } catch (eFL) {}
-  // 注意：不处理 ny（底面）——底面是地板，铺 barrier 会把地板变成屏障
+  // 四个侧面 + 顶面：屏障 + 框梁边（底面 ny 单独处理——它是地板，铺 barrier 会把地板变成屏障）
   let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0]]
   keys.forEach(k => {
     let b = c4CellBox(slot, k)
-    // ② 每个"没有邻居"的面：屏障 + 框梁边 + 外面一圈结构空位
+    let below = set[c4CellKey(b.gx, b.gy - 1, b.gz)]   // 向下扩建：有下方邻居 = 这格不是最低层
+    // ② 每个"没有邻居"的面：屏障 + 框梁边
     DIRS.forEach(dd => {
       let nk = c4CellKey(b.gx + dd[1], b.gy + dd[2], b.gz + dd[3])
       let dir = dd[0]
@@ -93,21 +95,25 @@ function c4RebuildCells(server, cube) {
       else if (dir === 'nz') { z0 = z1 = b.Z0; x0 = b.X0; x1 = b.X1; y0 = b.Y0; y1 = b.Y1; sz0 = sz1 = b.Z0 - 1; sx0 = b.X0; sx1 = b.X1; sy0 = b.Y0; sy1 = b.Y1 }
       else if (dir === 'py') { y0 = y1 = b.Y1; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y1 + 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
       else { y0 = y1 = b.Y0; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y0 - 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
-      // ②-a 有邻居的面 = 内边框：把共享平面上的框梁清掉
+      // ②-a 有邻居的面 = 内边框：把共享平面上的框梁/屏障/地板清掉（上下左右扩都靠这一步连通）
       //     （世界/旧壳在 16 格网格上本来就留着一圈 warping_frame，扩建后会变成房间里的"多余柱子"）
       if (set[nk]) {
         run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace kubejs:warping_frame')
         run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace minecraft:barrier')
+        run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace kubejs:warping_frame_platform')
         return
       }
       // ① 边框平面：不动（不写 filling、不恢复 air）。
-      //    旧档保留原有那层（迁移前是模组填充墙）；新扩建出来的格子本来就是 air，玩家可以自己在边框上放方块。
       // ② 屏障：边框【外 1 格】（侧面 Y0+1..Y1，顶面整面）；底面不放屏障（那是地板）。
       let by0 = (dir === 'py') ? sy0 : (y0 + 1)
       run('fill ' + sx0 + ' ' + by0 + ' ' + sz0 + ' ' + sx1 + ' ' + sy1 + ' ' + sz1 + ' minecraft:barrier')
-      // ③ 不再铺 structure_void 外壳（屏障就够了；旧档外面本来还有自己的填充壳）
-      // 底面下方那格：结构空位（不再放屏障）
-      if (b.gy === 0) run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:structure_void')
+      // 基地原点格的天花板中央 3×3 = 隧道洞：顶面屏障那一层要让开（否则把洞封死）
+      if (dir === 'py' && b.gx === 0 && b.gz === 0 && b.gy === 0) {
+        let HX = Math.floor((b.X0 + b.X1) / 2), HZ = Math.floor((b.Z0 + b.Z1) / 2)
+        run('fill ' + (HX - 1) + ' ' + sy0 + ' ' + (HZ - 1) + ' ' + (HX + 1) + ' ' + sy0 + ' ' + (HZ + 1) + ' minecraft:air')
+      }
+      // ③ 最底层地板下方那格：结构空位（不再放屏障）
+      if (!below) run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:structure_void')
       // 框梁：这一面四条边（让外壳看起来还是立方体）
       if (dir === 'px' || dir === 'nx') {
         run('fill ' + x0 + ' ' + b.Y1 + ' ' + z0 + ' ' + x1 + ' ' + b.Y1 + ' ' + z1 + ' kubejs:warping_frame')
@@ -126,17 +132,18 @@ function c4RebuildCells(server, cube) {
         run('fill ' + x1 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
       }
     })
-    // 地板只给【底层】铺（gy=0）。往上叠的格子是"把旧天花板打通"的挑高空间，不铺地板；
-    // 顺手把以前误铺在它 Y0 层的 platform 清掉（只 replace platform，框梁/玩家方块不动）。
-    if (b.gy === 0) {
+    // 地板：只在【没有下方邻居】的格铺（= 并集最低层）。向下扩建后地板跟着下移，Y1 不变。
+    if (!below) {
       run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
-      // 3×3 洞口只属于【基地底层那格】（gy=0）
-      if (b.gx === 0 && b.gz === 0) {
-        let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
-        run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
-      }
     } else {
       run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
+      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame')
+      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
+    }
+    // 基地原点格的 3×3 隧道洞在【天花板】(Y1) 中央（旧版在地板 Y0 中央，已废弃）；上方没格才开
+    if (b.gx === 0 && b.gz === 0 && b.gy === 0 && !set[c4CellKey(b.gx, b.gy + 1, b.gz)]) {
+      let HX = Math.floor((b.X0 + b.X1) / 2), HZ = Math.floor((b.Z0 + b.Z1) / 2)
+      run('fill ' + (HX - 1) + ' ' + b.Y1 + ' ' + (HZ - 1) + ' ' + (HX + 1) + ' ' + b.Y1 + ' ' + (HZ + 1) + ' minecraft:air')
     }
     // 隐藏照明：天花板下面 1 格，每 5 格一颗 minecraft:light；只在空气里放，玩家方块/机器不会被覆盖
     let ly = b.Y1 - 1
@@ -146,12 +153,6 @@ function c4RebuildCells(server, cube) {
       }
     }
   })
-  // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
-  try {
-    let a0 = C.baseAnchor(slot)
-    let FX = a0.x, FZ = a0.z
-    run('fill ' + (FX - 1) + ' ' + u.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + u.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
-  } catch (eF2) {}
   console.info('[C4] 格子重建 slot=' + slot + ' cells=' + keys.join(' | '))
   return keys.length
 }
@@ -192,6 +193,7 @@ function c4CellScan(server, b, dir, forReduce) {
   else if (dir === 'pz') z0++
   else if (dir === 'nz') z1--
   else if (dir === 'py') y0++
+  else if (dir === 'ny') y1--
   if (x1 < x0 || y1 < y0 || z1 < z0) return { ok: true }
   let okId = forReduce ? c4CellEmptyForReduce : c4CellEmptyForExpand
   let bad = 0, first = ''
@@ -212,7 +214,7 @@ function c4CellsConnected(set, start) {
   if (!set[start]) return false
   let seen = {}, q = [start], cnt = 0
   seen[start] = 1
-  let dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, -1]]
+  let dirs = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
   while (q.length) {
     let k = q.shift()
     cnt++
@@ -241,7 +243,7 @@ function c4ClearNewCellFill(server, b) {
 function c4ClearRemovedCell(server, b, set2) {
   let run = (cmd) => { try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) } catch (e) {} }
   run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
-  let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0]]
+  let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0], ['ny', 0, -1, 0]]
   DIRS.forEach(dd => {
     let nk = c4CellKey(b.gx + dd[1], b.gy + dd[2], b.gz + dd[3])
     if (set2[nk]) return
@@ -253,11 +255,12 @@ function c4ClearRemovedCell(server, b, set2) {
     else if (dir === 'pz') { bx0 = b.X0 - 1; bx1 = b.X1 + 1; bz0 = b.Z1 + 1; bz1 = b.Z1 + 2 }
     else if (dir === 'nz') { bx0 = b.X0 - 1; bx1 = b.X1 + 1; bz0 = b.Z0 - 2; bz1 = b.Z0 - 1 }
     else if (dir === 'py') { bx0 = b.X0 - 1; bx1 = b.X1 + 1; by0 = b.Y1 + 1; by1 = b.Y1 + 2; bz0 = b.Z0 - 1; bz1 = b.Z1 + 1 }
+    else if (dir === 'ny') { bx0 = b.X0 - 1; bx1 = b.X1 + 1; by0 = b.Y0 - 2; by1 = b.Y0 - 1; bz0 = b.Z0 - 1; bz1 = b.Z1 + 1 }
     ;['minecraft:barrier', 'minecraft:structure_void'].forEach(t => {
       run('fill ' + bx0 + ' ' + by0 + ' ' + bz0 + ' ' + bx1 + ' ' + by1 + ' ' + bz1 + ' minecraft:air replace ' + t)
     })
   })
-  if (b.gy === 0) run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:air replace minecraft:structure_void')
+  run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:air replace minecraft:structure_void')
 }
 
 // 加一格：先验空/扣物品，再 forceload、打通共享边框、清旧壳，最后重建外边界
@@ -271,13 +274,23 @@ function c4AddCell(server, cube, dir, player, force) {
   if (player && !set[cur]) { C.deny(player, '你不在基地的格子里，扩建已取消'); return { ok: false, reason: 'outside' } }
   let g = String(cur).split(',').map(Number)
   let n = [g[0] + (dir === 'px' ? 1 : dir === 'nx' ? -1 : 0),
-           g[1] + (dir === 'py' ? 1 : 0),
+           g[1] + (dir === 'py' ? 1 : dir === 'ny' ? -1 : 0),
            g[2] + (dir === 'pz' ? 1 : dir === 'nz' ? -1 : 0)]
   let key = c4CellKey(n[0], n[1], n[2])
   if (set[key]) { C.deny(player, '那个方向已经是基地的一部分了'); return { ok: false, reason: 'exists' } }
   let b = c4CellBox(slot, key)
+  // 向下扩建：不许低于维度最低可建高度（地板/结构空位/屏障都要留位置）
+  if (dir === 'ny') {
+    let minY = -64
+    try { let lv = C.owLevel(server); if (lv) minY = Number(lv.getMinBuildHeight()) } catch (eMin) {}
+    if (b.Y0 - 1 < minY + 1) {
+      C.deny(player, '已经到世界最低高度了（下限 ' + minY + '），不能再向下扩建')
+      return { ok: false, reason: 'ymin' }
+    }
+  }
   // ① 目标格必须是空的（force 仅给 /cube admin expand ... force 用）
-  if (!force) {
+  //    例外：ny（向下）= 往地里挖，目标格本来就会是实心地形 → 不检查，改为自动把内部 15³ 挖空
+  if (!force && dir !== 'ny') {
     let chk = c4CellScan(server, b, dir, false)
     if (!chk.ok) {
       C.deny(player, '扩建已取消：目标格不是空的 —— ' + chk.msg + '；请先清空这 16×17×16（模组外壳/结构空位不算）')
@@ -296,7 +309,16 @@ function c4AddCell(server, cube, dir, player, force) {
     else if (dir === 'pz') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z0 + ' minecraft:air')
     else if (dir === 'nz') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z1 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
     else if (dir === 'py') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air')
+    else if (dir === 'ny') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y1 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
   } catch (e0) {}
+  // ④.5 向下扩建：把新格内部 15³ 挖成空气（地板 Y0 + 四壁/共享层 Y1 由 c4RebuildCells 统一铺）
+  if (dir === 'ny') {
+    try {
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + (b.X0 + 1) + ' ' + (b.Y0 + 1) + ' ' + (b.Z0 + 1)
+        + ' ' + (b.X1 - 1) + ' ' + (b.Y1 - 1) + ' ' + (b.Z1 - 1) + ' minecraft:air')
+      console.info('[C4] 向下扩建挖空内部 slot=' + slot + ' cell=' + key + ' y ' + (b.Y0 + 1) + '..' + (b.Y1 - 1))
+    } catch (eDig) { console.warn('[C4] 向下扩建挖空失败: ' + eDig) }
+  }
   // ⑤ 清掉新格里的旧外壳/旧版填充（只动这两种方块）
   c4ClearNewCellFill(server, b)
   set[key] = 1
@@ -419,7 +441,8 @@ let C4_HOLE_CLICK = {}   // 3×3 连接洞二次确认
 function c4DoExpand(server, cube, face, player) {
   let C = c4Cwc()
   if (!C || !cube) return
-  if (face !== 'px' && face !== 'nx' && face !== 'pz' && face !== 'nz' && face !== 'py') {
+  if (face === 'py') { C.deny(player, '已禁用向上扩展，只能向下（ny）'); return }
+  if (face !== 'px' && face !== 'nx' && face !== 'pz' && face !== 'nz' && face !== 'ny') {
     C.deny(player, '该面不可扩展')
     return
   }
@@ -432,7 +455,8 @@ function c4DoReduce(server, cube, face, player) {
   let C = c4Cwc()
   if (!C || !cube) return
   if (!player) { C.deny(player, '拆除需要玩家执行'); return }
-  if (face !== 'px' && face !== 'nx' && face !== 'pz' && face !== 'nz' && face !== 'py') {
+  if (face === 'py') { C.deny(player, '已禁用向上扩展，只能向下（ny）'); return }
+  if (face !== 'px' && face !== 'nx' && face !== 'pz' && face !== 'nz' && face !== 'ny') {
     C.deny(player, '该面不可拆除')
     return
   }
@@ -442,7 +466,7 @@ function c4DoReduce(server, cube, face, player) {
   if (!set[cur]) { C.deny(player, '你不在基地的格子里，拆除已取消'); return }
   let g = String(cur).split(',').map(Number)
   let n = [g[0] + (face === 'px' ? 1 : face === 'nx' ? -1 : 0),
-           g[1] + (face === 'py' ? 1 : 0),
+           g[1] + (face === 'py' ? 1 : face === 'ny' ? -1 : 0),
            g[2] + (face === 'pz' ? 1 : face === 'nz' ? -1 : 0)]
   let key = c4CellKey(n[0], n[1], n[2])
   if (!set[key]) { C.deny(player, '那个方向没有可拆的格子'); return }
@@ -467,24 +491,28 @@ function c4CmdExpand(ctx, face, force) {
   let C = c4Cwc()
   if (!C) return 0
   let server = ctx.source.server
-  if (face !== 'nz' && face !== 'px' && face !== 'nx' && face !== 'py' && face !== 'pz') { C.reply(ctx, '该面不可扩展'); return 0 }
+  // 2026-10：只允许向下（ny）；py 保留入口但明确拒绝
+  if (face === 'py') { C.reply(ctx, '已禁用向上扩展，只能向下（ny）'); return 0 }
+  if (face !== 'nz' && face !== 'px' && face !== 'nx' && face !== 'ny' && face !== 'pz') {
+    C.reply(ctx, '该面不可扩展（可用 nx/px/nz/pz/ny）'); return 0
+  }
   C.refreshDb()
   let slot = Number(C.slot(ctx))
   let info = C.teamOfSlot(slot)
   if (!info || !info.cube) { C.reply(ctx, '槽位 ' + slot + ' 没有登记'); return 0 }
-  // 横向四面 → 格子化（只扩基地，绝不动传送器）
-  if (face === 'px' || face === 'nx' || face === 'pz' || face === 'nz') {
-    let r = c4AddCell(server, info.cube, face, null, force)
-    C.reply(ctx, r.ok ? ('扩展 ' + face + ' 完成（格子 +1，共 ' + c4Cells(info.cube).length + ' 格）')
-      : (r.reason === 'exists' ? '该方向已有格子，未扩建'
-        : (r.reason === 'air' ? ('扩建已取消：目标格不是空的 —— ' + r.msg) : '扩建需要 1 个立方体扩展器')))
-    return 1
+  // 四面 + 向下都走格子化（只扩基地，绝不动传送器）
+  let r = c4AddCell(server, info.cube, face, null, force)
+  if (r.ok) {
+    C.reply(ctx, '扩展 ' + face + ' 完成（格子 +1，共 ' + c4Cells(info.cube).length + ' 格）')
+  } else if (r.reason === 'exists') {
+    C.reply(ctx, '该方向已有格子，未扩建')
+  } else if (r.reason === 'air') {
+    C.reply(ctx, '扩建已取消：目标格不是空的 —— ' + r.msg)
+  } else if (r.reason === 'ymin') {
+    C.reply(ctx, '已到世界最低高度，不能再向下扩建')
+  } else {
+    C.reply(ctx, '扩建失败（' + (r.reason || 'error') + '）')
   }
-  // 向上：同样格子化（按控制台/原点格向上加一格）
-  let rPy = c4AddCell(server, info.cube, 'py', null, force)
-  C.reply(ctx, rPy.ok ? ('扩展 py 完成（格子 +1，共 ' + c4Cells(info.cube).length + ' 格）')
-    : (rPy.reason === 'exists' ? '那格已经在基地里了'
-      : (rPy.reason === 'air' ? ('扩建已取消：目标格不是空的 —— ' + rPy.msg) : '扩建需要 1 个立方体扩展器')))
   return 1
 }
 
@@ -533,47 +561,50 @@ function c4ToolUse(event, reduce) {
     let t = C.team(p), key = t ? C.teamKey(t) : null
     let cube = key ? C.cubeOfTeam(key) : null
     if (!cube) { C.deny(p, '你还没有立方体'); return }
-    // 视线朝下 + 洞口附近双击：扩展器 = 激活 3×3，拆除器 = 拆掉 3×3
-    if (Number(p.pitch) > 55) {
-      let nearHole = (a) => {
-        let dd = Math.sqrt(Math.pow(p.x - (a.x + 0.5), 2) + Math.pow(p.z - (a.z + 0.5), 2))
-        return dd < 5.5 && Math.abs(p.y - a.y) < 7
-      }
-      if (nearHole(C.baseAnchor(cube.slot)) || nearHole(C.teleAnchor(cube.slot))) {
-        let now0 = Date.now(), k0 = 'hole:' + (reduce ? 'r:' : 'e:') + C.name(p) + ':' + cube.slot
-        let last0 = C4_HOLE_CLICK[k0]
-        if (!last0 || now0 - last0 > 5000) {
-          C4_HOLE_CLICK[k0] = now0
-          C.deny(p, reduce ? '隧道: 再右键一次确认【拆除】' : '隧道: 再右键一次确认激活')
-          return
-        }
-        C4_HOLE_CLICK[k0] = 0
-        if (reduce) { C.deactivateHole(server, cube.slot, p); return }
-        // 激活要消耗 1 个扩展器（创造模式不扣）
-        try {
-          if (!p.isCreative()) {
-            let st = p.mainHandItem
-            if (!st || st.count <= 0 || String(st.id) !== 'kubejs:cube_expander') { C.deny(p, '手里没有立方体扩展器'); return }
-            st.shrink(1)
-          }
-        } catch (eC) { console.warn('[C4] 扣扩展器失败: ' + eC) }
-        C.activateHole(server, cube.slot, p)
+    // 洞口双击：基地天花板洞 = 仰视（pitch < -50）；传送仓地板洞 = 俯视（pitch > 50）
+    // 扩展器 = 激活 3×3 隧道，拆除器 = 拆掉隧道
+    let nearHole = (a) => {
+      let dd = Math.sqrt(Math.pow(p.x - (a.x + 0.5), 2) + Math.pow(p.z - (a.z + 0.5), 2))
+      return dd < 5.5 && p.y >= a.y - 1 && p.y <= a.y + 17
+    }
+    let pitchNow = Number(p.pitch)
+    let atBaseHole = pitchNow < -50 && nearHole(C.baseAnchor(cube.slot))
+    let atTeleHole = pitchNow > 50 && nearHole(C.teleAnchor(cube.slot))
+    if (atBaseHole || atTeleHole) {
+      let now0 = Date.now(), k0 = 'hole:' + (reduce ? 'r:' : 'e:') + C.name(p) + ':' + cube.slot
+      let last0 = C4_HOLE_CLICK[k0]
+      if (!last0 || now0 - last0 > 5000) {
+        C4_HOLE_CLICK[k0] = now0
+        C.deny(p, reduce ? '隧道: 再右键一次确认【拆除】' : '隧道: 再右键一次确认激活')
         return
       }
+      C4_HOLE_CLICK[k0] = 0
+      if (reduce) { C.deactivateHole(server, cube.slot, p); return }
+      // 激活要消耗 1 个扩展器（创造模式不扣）
+      try {
+        if (!p.isCreative()) {
+          let st = p.mainHandItem
+          if (!st || st.count <= 0 || String(st.id) !== 'kubejs:cube_expander') { C.deny(p, '手里没有立方体扩展器'); return }
+          st.shrink(1)
+        }
+      } catch (eC) { console.warn('[C4] 扣扩展器失败: ' + eC) }
+      C.activateHole(server, cube.slot, p)
+      return
     }
-    // 不朝下：只能在【基地】内用（传送器固定 17³，不许改）
+    // 只能在【基地】内用（传送仓固定 17³，不许改）
     if (!c4InBase(p, cube.slot)) { C.deny(p, '扩展/拆除只能在基地内部使用'); return }
     let yaw = ((Number(p.yaw) % 360) + 360) % 360
-    let pitch = Number(p.pitch)
+    let pitch = pitchNow
     let face = null
     // MC 的 XRot：正 = 低头，负 = 抬头
-    if (pitch < -50) face = 'py'
-    else if (pitch > 50) { C.deny(p, '底面不可操作'); return }
+    // 2026-10：只允许向下扩建（朝下 = ny）；抬头 = 原来的 py → 禁用
+    if (pitch < -50) { C.deny(p, '已禁用向上扩展，只能向下（ny）'); return }
+    if (pitch > 50) face = 'ny'
     else face = ['pz', 'nx', 'nz', 'px'][Math.round(yaw / 90) % 4]   // +z/-x/-z/+x 四面都能扩
-    // +z 面原来是操控台那一面：只要传送器已经搬离基地（按钮不在基地层 BASE_FLOOR+1）就允许扩 +z
-    // （以前写死 y=11，传送器改到 y=79 之后就全被挡住了）
+    // +z 面原来是操控台那一面：只要传送仓已经搬离基地（按钮不在基地层 BASE_FLOOR+1）就允许扩 +z
+    // （以前写死 y=11，传送仓改到 y=79 之后就全被挡住了）
     if (face === 'pz' && Math.floor(C.btnPos(cube.slot).y) === (C.BASE_FLOOR + 1)) {
-      C.deny(p, '+z 面要先把传送器搬离基地（旧存档请先按一次旧按钮完成迁移）')
+      C.deny(p, '+z 面要先把传送仓搬离基地（旧存档请先按一次旧按钮完成迁移）')
       return
     }
     let now = Date.now(), k = (reduce ? 'r:' : 'e:') + C.name(p)
