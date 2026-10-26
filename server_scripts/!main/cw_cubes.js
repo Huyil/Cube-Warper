@@ -33,7 +33,7 @@ const C4_CORE_Y = 105.5           // 基地核心（基地不再承载跃迁：�
 // ── S2：传送器舱（17³）几何 ─────────────────────────────────────────────
 // 底面 y=16、顶面 y=32、核心 y=24.5；x/z 与基地同（c4CubeX(slot), C4_Z）。
 // 唯一真源是【启动按钮方块坐标】c4BtnPos(slot)，其余全部由它派生（不再"中心→面板→算子"链式推）。
-const C4_TELE_FLOOR = 79          // 传送器默认底面 y（79..95，顶面 96，离基地地板 97 留 1 格）
+const C4_TELE_FLOOR = 78          // 传送器默认底面 y（21³ 外壳 76..96，舱体 78..94，顶面 95；不碰基地地板 97）
 const C4_TELE_Y = C4_TELE_FLOOR + 8.5   // 传送器核心 y = 18.5
 const C4_TELE_HALF = 8.5          // 核心到地板/顶面
 const C4_BASE_FLOOR = 97          // 基地默认底面 y（C4_CORE_Y - 8.5）
@@ -3949,14 +3949,14 @@ function c4BuildTeleporter(server, slot, a, logIt) {
   let bb = c4RoomBox(cx, cy, cz, ext0)
   let tmpl = 0
   try {
-    // 只清/放 17³ 本体：21³ 模板带 2 格 air 留边，贴到基地地板下方时会把基地地板一起清掉
-    server.runCommandSilent('execute in minecraft:overworld run fill ' + bb.X0 + ' ' + bb.Y0 + ' ' + bb.Z0
-      + ' ' + bb.X1 + ' ' + bb.Y1 + ' ' + bb.Z1 + ' minecraft:air')
-    tmpl = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter '
-      + bb.X0 + ' ' + bb.Y0 + ' ' + bb.Z0))
+    // 21³ 模板：17³ 舱居中（偏移 +2），四周 2 格 air 留边；要求 Y0+18 < 基地地板（78+18=96 < 97）
+    server.runCommandSilent('execute in minecraft:overworld run fill ' + (bb.X0 - 2) + ' ' + (bb.Y0 - 2) + ' ' + (bb.Z0 - 2)
+      + ' ' + (bb.X1 + 2) + ' ' + (bb.Y1 + 2) + ' ' + (bb.Z1 + 2) + ' minecraft:air')
+    tmpl = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter21 '
+      + (bb.X0 - 2) + ' ' + (bb.Y0 - 2) + ' ' + (bb.Z0 - 2)))
   } catch (eT) { console.warn('[C4] 传送器模板放置失败: ' + eT) }
   if (!(tmpl > 0)) {
-    console.warn('[C4] 模板 hexahedron:cw_teleporter 不可用（ret=' + tmpl + '）→ 退回程序化建舱')
+    console.warn('[C4] 模板 hexahedron:cw_teleporter21 不可用（ret=' + tmpl + '）→ 退回程序化建舱')
     try { c4BuildRoom(server, 'minecraft:overworld', cx, cy, cz, ext0, false, 'all') }
     catch (e) { console.warn('[C4] 传送器舱体失败: ' + e) }
   } else {
@@ -4284,6 +4284,20 @@ function c4ActivateHole(server, slot, player) {
         + (gtx + 1) + ' ' + tel.y + ' ' + (gtz + 1) + ' minecraft:glass')
       console.info('[C4] 隧道玻璃盖：基地 @' + gbx + ',' + bas.y + ',' + gbz + ' / 传送器 @' + gtx + ',' + tel.y + ',' + gtz + '（3×3，玩家可自行拆除）')
     } catch (eGl) { console.warn('[C4] 隧道玻璃盖失败: ' + eGl) }
+
+    // ③.6 5×5 管道：基地地板洞 → 传送室顶部之间，环形补框梁（中间 3×3 保持畅通）
+    try {
+      let px0 = Math.floor(bx), pz0 = Math.floor(bz)
+      let top = bas.y - 1, bot = tel.y + 16      // 96 → 94（舱顶圈那一层不填，避免挡 up 面门）
+      for (let py = top; py >= bot; py--) {
+        // 5×5 环 = 5×5 填框梁后再把中间 3×3 挖回空气
+        server.runCommandSilent('execute in minecraft:overworld run fill ' + (px0 - 2) + ' ' + py + ' ' + (pz0 - 2) + ' '
+          + (px0 + 2) + ' ' + py + ' ' + (pz0 + 2) + ' kubejs:warping_frame')
+        server.runCommandSilent('execute in minecraft:overworld run fill ' + (px0 - 1) + ' ' + py + ' ' + (pz0 - 1) + ' '
+          + (px0 + 1) + ' ' + py + ' ' + (pz0 + 1) + ' minecraft:air')
+      }
+      console.info('[C4] 5×5 管道：y ' + top + '..' + bot + ' @' + px0 + ',' + pz0 + '（中间 3×3 畅通）')
+    } catch (ePipe) { console.warn('[C4] 5×5 管道失败: ' + ePipe) }
 
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
