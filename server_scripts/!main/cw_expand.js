@@ -136,6 +136,13 @@ function c4RebuildCells(server, cube) {
       run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
     }
   })
+  // 第二遍：格子共享边界面上的屏障会互相"伸进"邻居 1 格（例如 (-1,0,0) 的北墙 fill 到 x=48000，
+  // 那正好是新走廊 (0,0,-1) 的最西一列）→ 在每格自己的 box 内把 barrier 清掉。
+  // 每格自己的外墙屏障都在 box 的 ±1 格外，不会被误删。
+  keys.forEach(k => {
+    let b = c4CellBox(slot, k)
+    run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
+  })
   // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
   try {
     let a0 = C.baseAnchor(slot)
