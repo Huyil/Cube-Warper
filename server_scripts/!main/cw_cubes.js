@@ -2745,6 +2745,11 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
     .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
       c4ActivateHole(ctx.source.server, IAT.getInteger(ctx, 'slot'), null); return 1
     })))
+  // 调试：/cube admin unhole <slot> —— 等价于拆除器双击（清掉管道两扇 3×3）
+  root.then(cmdRoot.literal('unhole').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
+      c4DeactivateHole(ctx.source.server, IAT.getInteger(ctx, 'slot'), null); return 1
+    })))
 
   // 临时解锁：/cube admin ext reset <slot> —— ext 清零并按 17³ 重建舱体+6 门
   root.then(cmdRoot.literal('ext').requires(src => src.hasPermission(4))
@@ -4447,12 +4452,16 @@ function c4ActivateHole(server, slot, player) {
       try { server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (q[0] - 24) + ' ' + (q[1] - 24) + ' ' + (q[0] + 24) + ' ' + (q[1] + 24)) } catch (e0) {}
     })
     // ② 清旧 3×3 门（历史四代 tag 都清；绝不碰 6 面门 cw_face_*）
+    //    以隧道中点为圆心、半径盖住整根管道（旧版只扫两个洞口，管道中段的残门会漏掉 → 第 3 扇）
+    let shaftMidY = (baseCeil + teleFloor) / 2
+    let shaftR = Math.ceil((teleFloor - baseCeil) / 2) + 4
     ;['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
-      ;[[bx, baseHoleY, bz], [tx, teleHoleY, tz]].forEach(p => {
-        try { server.runCommandSilent('execute in minecraft:overworld positioned ' + p[0] + ' ' + p[1] + ' ' + p[2]
-          + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..12]') } catch (e1) {}
-      })
+      try {
+        server.runCommandSilent('execute in minecraft:overworld positioned ' + bx + ' ' + shaftMidY + ' ' + bz
+          + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..' + shaftR + ']')
+      } catch (e1) {}
     })
+    console.info('[C4] 隧道清旧门：圆心@' + bx + ',' + shaftMidY + ',' + bz + ' r=' + shaftR)
     // ③ 打通两个洞口（清掉历史遗留玻璃/水/封块；再清洞的另一侧一格，防止旧结构顶住门面）
     try {
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (hx - 1) + ' ' + baseCeil + ' ' + (hz - 1) + ' '
@@ -4477,113 +4486,107 @@ function c4ActivateHole(server, slot, player) {
         console.info('[C4] 5×5 管道：y ' + pipeBot + '..' + pipeTop + ' @' + px0 + ',' + pz0 + '（环形框梁，中间 3×3 畅通）')
       }
     } catch (ePipe) { console.warn('[C4] 5×5 管道失败: ' + ePipe) }
-    // ③.6 只给【传送仓洞口】盖 3×3 玻璃（基地天花板洞保持敞开）：
-    //     玻璃放在管道顶那一层（tel.y-1=179），舱内洞口（180）仍是空气 → B 门（180.5）不会被玻璃埋住；
-    //     玻璃同时封住管道：万一没触发 B，人最多落到玻璃上（180.0），不会一路掉进管道来回弹。
-    try {
-      server.runCommandSilent('execute in minecraft:overworld run fill ' + (px0 - 1) + ' ' + pipeTop + ' ' + (pz0 - 1) + ' '
-        + (px0 + 1) + ' ' + pipeTop + ' ' + (pz0 + 1) + ' minecraft:glass')
-      console.info('[C4] 隧道玻璃盖（传送仓洞口下 1 格）：' + px0 + ',' + pipeTop + ',' + pz0 + ' 3×3')
-    } catch (eGl) { console.warn('[C4] 传送仓玻璃盖失败: ' + eGl) }
-    // ③.7 上下互通的两扇 3×3：
-    //   下行：舱地板洞 tel.y+0.5（rot +90，从上往下）→ 基地地板洞口旁
-    //   上行：基地底面 17×17 down 门下方 bas.y-0.5（rot -90，从下往上）→ 舱内地板
+    // ③.6 管道内保持 3×3 全空（不再盖玻璃）：两扇 3×3 互指后，人从舱内掉下来会从管道门
+    //     （tel.y-1.1=116.9，眼睛落在 116.85）出来继续往基地落；玻璃在 117 会顶到头顶，必须留空。
+    // ③.7 两扇 3×3 互指（和底部 17×17 大门的链接方式完全一样：只差维度/坐标/尺寸）
+    //   · 顶门 Ptop：舱地板洞里、17×17 down 面（tel.y+0.25）之上，法向 +Y（rot 90）→ 接住舱内往下掉的人
+    //   · 底门 Pbot：管道内 tel.y-1.1（=116.9），法向 -Y（rot -90）→ 接住基地往上飞的人
+    //   · 每扇的 destination = 另一扇的坐标（同一维度、尺寸 3），两扇法向相反 → IP 识别为 reversePortal 对；
+    //     穿门后 IP 会把人放到对侧门面外 0.05 格，所以不会原地反复触发。
+    //   · 效果：掉下来的人从底门出来（已在 17×17 下方，继续落进基地）；飞上去的人从顶门出来（已在 17×17 上方，
+    //     继续飞进舱内）——两条路径都不会碰到 17×17 down 面。
     let okP1 = false, okP2 = false
+    let topY = teleFloor + 0.9, botY = teleFloor - 1.1
     try {
-      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.9, z: tz }, 3, 90)
-      let Pup = c4SpawnLinkPortal(server, { x: bx, y: tel.y - 1.1, z: bz }, 3, -90)
-      let aimP = (e, tag, dx, dy, dz) => {
-        if (!e) return false
-        try { e.addTag('cw_link'); e.addTag('cw_pipe'); e.addTag(tag); e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId); e.addTag(c4TeamTagOf(slot)) } catch (e0) {}
-        let ok = false
-        try { ok = c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'), c4Vec(dx, dy, dz), e.x, e.y, e.z) } catch (e1) { ok = false }
-        try { e.setIsVisible(true) } catch (e2) {}
-        try { c4Sync(e) } catch (e3) {}
-        return ok
+      let Ptop = c4SpawnLinkPortal(server, { x: tx, y: topY, z: tz }, 3, 90)
+      let Pbot = c4SpawnLinkPortal(server, { x: bx, y: botY, z: bz }, 3, -90)
+      if (!Ptop || !Pbot) {
+        try { if (Ptop) Ptop.discard() } catch (eD1) {}
+        try { if (Pbot) Pbot.discard() } catch (eD2) {}
+        console.warn('[C4] 管道 3×3 生成失败 slot=' + slot + ' top=' + (!!Ptop) + ' bot=' + (!!Pbot))
+      } else {
+        let tagP = (e, tag) => {
+          try {
+            e.addTag('cw_link'); e.addTag('cw_pipe'); e.addTag(tag)
+            e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId); e.addTag(c4TeamTagOf(slot))
+          } catch (e0) {}
+        }
+        // 互指：dest = 另一扇的 Pos（与 c4ApplyPortal 给 6 面门指门同一条路径）
+        let linkP = (e, other) => {
+          let ok = false
+          try {
+            ok = c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'),
+              c4Vec(other.x, other.y, other.z), e.x, e.y, e.z)
+          } catch (e1) { ok = false }
+          try { e.setIsVisible(!!C4_LINK_RENDER) } catch (e2) {}
+          try { c4Sync(e) } catch (e3) {}
+          return ok
+        }
+        tagP(Ptop, 'cw_pipe_down'); tagP(Ptop, 'cw_link_down')
+        tagP(Pbot, 'cw_pipe_up'); tagP(Pbot, 'cw_link_up')
+        okP1 = linkP(Ptop, Pbot)   // 舱内往下掉 → 从管道门出来
+        okP2 = linkP(Pbot, Ptop)   // 基地往上飞 → 从舱内门出来
+        console.info('[C4] 管道 3×3 互指 slot=' + slot
+          + ' 顶@' + topY + '(rot90,+Y)→底@' + Pbot.y + (okP1 ? ' OK' : ' 失败')
+          + ' / 底@' + botY + '(rot-90,-Y)→顶@' + Ptop.y + (okP2 ? ' OK' : ' 失败'))
       }
-      okP1 = aimP(Pdown, 'cw_pipe_down', bx + 2.0, baseFloor + 2.0, bz)
-      okP2 = aimP(Pup, 'cw_pipe_up', tx + 2.0, tel.y + 4.0, tz)
-      console.info('[C4] 上下互通 slot=' + slot + ' 下行@' + (tel.y + 0.5) + (okP1 ? ' OK' : ' 失败')
-        + ' / 上行@' + (tel.y - 1.1) + (okP2 ? ' OK' : ' 失败'))
-    } catch (ePipe2) { console.warn('[C4] 上下互通门失败: ' + ePipe2) }
+    } catch (ePipe2) { console.warn('[C4] 管道 3×3 门失败: ' + ePipe2) }
 
-    // ④ 两扇主门（cb_make_portal 直接生成，无反向门）
-    //    A 基地→舱（上行）：法向 -Y（rot [0,-90]，从下往上穿）；门面在天花板洞内 113.2
-    //    B 舱→基地（下行）：法向 +Y（rot [0,90]，从上往下落）；门面在地板洞内 180.5
-    //    落点 = 各自目标房间地板上 1 格 + 洞口旁 2 格（既不落洞里来回弹，也不吃坠落伤害）
-    // 按玩家站的位置决定建哪一侧：
-    //   站在基地里仰视天花板洞 → 只建基地侧那一扇（A）
-    //   站在传送仓里俯视地板洞   → 只建舱侧那一扇（B）
-    //   管理员命令（player=null）→ 两侧都建
-    // 上下互通完全交给管道里的两扇 3×3；不再建 A/B（B 会多出第 3 扇门）
-    let wantBase = false, wantTele = false
-    if (player) {
-      let near = (cx, cz, yLo, yHi) => {
-        let dx = player.x - cx, dz = player.z - cz
-        return Math.sqrt(dx * dx + dz * dz) < 6.0 && player.y >= yLo && player.y <= yHi
-      }
-      let nb = near(bx, bz, bas.y - 1, baseCeil + 1)
-      let nt = near(tx, tz, tel.y - 1, tel.y + 17)
-      wantBase = false; wantTele = false
-      console.info('[C4] 隧道激活定位：base=' + nb + ' tele=' + nt + ' → 建 ' + (wantBase ? 'A ' : '') + (wantTele ? 'B' : ''))
-    }
-    let A = wantBase ? c4SpawnLinkPortal(server, { x: bx, y: baseHoleY, z: bz }, 3, -90) : null
-    let B = wantTele ? c4SpawnLinkPortal(server, { x: tx, y: teleHoleY, z: tz }, 3, 90) : null
-
-    let aim = (e, tag, dx, dy, dz) => {
-      if (!e) return false
-      try {
-        e.addTag('cw_link'); e.addTag(tag); e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId)
-        e.addTag(c4TeamTagOf(slot))
-      } catch (e0) {}
-      let ok = false
-      try {
-        ok = c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'),
-          c4Vec(dx, dy, dz), e.x, e.y, e.z)
-      } catch (e1) { ok = false }
-      // ⚠ 关键：直接改字段/走 API 之后必须 reloadAndSyncToClient，否则【客户端没有这扇门】：
-      //    玩家看不到门（"像普通洞"），而且玩家的传送是客户端预测 + 服务端校验 → 也不会触发。
-      //    （物品/村民是纯服务端实体，所以它们能正常传送，玩家不能——这就是之前现象不一致的原因）
-      try { e.setIsVisible(!!C4_LINK_RENDER) } catch (e2) {}
-      try { c4Sync(e) } catch (e3) {}
-      return ok
-    }
-    // 洞口半径 1（3×3）+ 玩家半宽 0.3 → 横向让开 2 格才不会一落地又掉回去
-    if (A) { try { A.discard() } catch (eD) {} }   // 旧的 A 门一律删掉
-    let okA = false    // 基地 → 舱内地板（洞口 +x 2 格）
-    let okB = wantTele ? aim(B, 'cw_link_down', bx + 2.0, baseFloor + 2.0, bz) : false  // 舱 → 基地地板（洞口 +x 2 格）
-    console.info('[C4] 隧道 slot=' + slot + ' 建门 A=' + (wantBase ? (okA ? 'OK' : '失败') : '跳过')
-      + ' B=' + (wantTele ? (okB ? 'OK' : '失败') : '跳过')
-      + '（基地天花板洞@' + bx + ',' + baseHoleY + ',' + bz + ' / 传送仓地板洞@' + tx + ',' + teleHoleY + ',' + tz + '）')
+    // ④ 隧道只由上面两扇 3×3 组成（不再建历史 A/B 门——B 就是第 3 扇的来源）
+    console.info('[C4] 隧道 slot=' + slot + ' 就绪：3×3×2 扇互指'
+      + '（顶@' + tx + ',' + topY + ',' + tz + ' rot+90 / 底@' + bx + ',' + botY + ',' + bz + ' rot-90）'
+      + ' 上=OK 下=' + (okP1 && okP2 ? 'OK' : '失败'))
     try { c4BarTeam(server, slot, '隧道: 基地 ↔ 传送仓 已连通') } catch (e3) {}
-    return (okA ? 1 : 0) + (okB ? 1 : 0)
+    return (okP1 ? 1 : 0) + (okP2 ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
 }
 
-// 拆掉 3×3 连接门（两处洞都清；只杀 cw_link 系列，不碰 6 面门）
+// 拆掉 3×3 连接门（只杀 cw_link/cw_pipe 系列，绝不碰 17×17 的 cw_face_*）
+// 用隧道中点 + 覆盖整根管道的半径扫一遍：两扇（顶 tel.y+0.9 / 底 tel.y-1.1）都在范围内。
 function c4DeactivateHole(server, slot, player) {
   try {
     let bas = c4BaseAnchor(slot), tel = c4TeleAnchor(slot)
+    let baseCeil = bas.y + 16
+    let bx = bas.x + 0.5, bz = bas.z + 0.5
+    let midY = (baseCeil + tel.y) / 2
+    let r = Math.ceil((tel.y - baseCeil) / 2) + 4
     let n = 0
-    // 新布局：基地侧在【天花板】(bas.y+16)，传送仓侧在【地板】(tel.y)；半径放到 14 覆盖整根管道
-    ;[[bas.x + 0.5, bas.y + 16.5, bas.z + 0.5], [tel.x + 0.5, tel.y + 0.5, tel.z + 0.5]].forEach(pt => {
-      ;['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
-        try {
-          server.runCommandSilent('execute in minecraft:overworld positioned ' + pt[0] + ' ' + pt[1] + ' ' + pt[2]
-            + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..14]')
-          n++
-        } catch (e) {}
-      })
+    ;['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
+      try {
+        let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + bx + ' ' + midY + ' ' + bz
+          + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..' + r + ']'))
+        if (!isNaN(k)) n += k
+      } catch (e) {}
     })
-    // 管道里那两扇在 y=114/178，离两处洞口都 >14 → 单独再扫一遍整根管道
-    try {
-      server.runCommandSilent('execute in minecraft:overworld positioned ' + (bas.x + 0.5) + ' '
-        + (bas.y + 16 + 32) + ' ' + (bas.z + 0.5) + ' run kill @e[type=immersive_portals:portal,tag=cw_pipe,distance=..72]')
-    } catch (eP) {}
-    console.info('[C4] 隧道已拆除 slot=' + slot + '（基地天花板洞/传送仓地板洞 + 管道）')
+    console.info('[C4] 隧道已拆除 slot=' + slot + '（清 ' + n + ' 扇 3×3；圆心@' + bx + ',' + midY + ',' + bz + ' r=' + r + '）')
     try { c4BarTeam(server, slot, '隧道: 已拆除') } catch (e2) {}
     return n
   } catch (e) { console.warn('[C4] 3×3 拆除失败: ' + e); return 0 }
+}
+
+// 一次性清理：老存档 slot2..14 的管道里遗留的 3×3（旧版会留 3 扇 / 位置不对）。
+// 只按 cw_link/cw_pipe 系列 tag 清，绝不碰 17×17 的 cw_face_*；由首次 tick + DB 标记保证只跑一次。
+function c4CleanStrayPipeLinks(server) {
+  let n = 0
+  try {
+    for (let s = 2; s <= 14; s++) {
+      let bas = c4BaseAnchor(s), tel = c4TeleAnchor(s)
+      let baseCeil = bas.y + 16
+      if (!(tel.y > baseCeil)) continue
+      let cx = bas.x + 0.5, cz = bas.z + 0.5
+      let midY = (baseCeil + tel.y) / 2
+      let r = Math.ceil((tel.y - baseCeil) / 2) + 4
+      ;['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
+        try {
+          let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + cx + ' ' + midY + ' ' + cz
+            + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..' + r + ']'))
+          if (!isNaN(k)) n += k
+        } catch (e) {}
+      })
+    }
+  } catch (e2) { console.warn('[C4] 旧隧道残留清理失败: ' + e2) }
+  if (n > 0) console.info('[C4] 旧隧道残留清理（slot2..14）：删除 ' + n + ' 扇 3×3（17×17 未动）')
+  return n
 }
 
 // 新玩家登录：不再强制传送（原来会把第一次进服的人直接扔进基岩维度 0,0 的出生笼子，
@@ -4654,6 +4657,16 @@ ServerEvents.tick(event => {
   } catch (eTl) { console.warn('[C4] 传送器布局迁移异常: ' + eTl) }
   // S1：老存档的门没有 cw_face_*/cw_team_* → 第一个 tick 按 cw_id_* + 几何补一次（幂等，等下次操作也会补）
   try { c4MigrateDoorTags(event.server) } catch (e) { console.warn('[C4] 门 tag 迁移异常: ' + e) }
+  // 一次性：清掉 slot2..14 管道里旧版遗留的第 3 扇/错位 3×3（DB 标记，只跑一次；不碰 17×17）
+  try {
+    let dbS = c4Db()
+    if (!dbS.pipeLinksClean2026) {
+      let kn = c4CleanStrayPipeLinks(event.server)
+      dbS.pipeLinksClean2026 = true
+      c4Save()
+      console.info('[C4] 管道残门清理完成（一次性，slot2..14）：' + kn + ' 扇')
+    }
+  } catch (eC) { console.warn('[C4] 管道残门清理异常: ' + eC) }
 })
 
 // 聊天框只在失败时说话（见 c4WarpBody / perform 的 abort 分支）
