@@ -1855,10 +1855,13 @@ function c4TravelSounds(server, atCore) {
 function c4VentBurst(server, slot) {
   try {
     let a = c4TeleAnchor(slot)
-    server.runCommandSilent('execute in minecraft:overworld positioned ' + (a.x + 0.5) + ' ' + (a.y + 8.5) + ' ' + (a.z + 0.5)
-      + ' run execute at @e[type=marker,tag=vent,distance=..30] run playsound minecraft:block.candle.extinguish master @a ~ ~ ~ 0.3 1')
-    server.runCommandSilent('function hexahedron:effects/vents')
-    console.info('[C4] 排气孔喷气 @' + a.x + ',' + (a.y + 8.5) + ',' + a.z)
+    let core = (a.x + 0.5) + ' ' + (a.y + 8.5) + ' ' + (a.z + 0.5)
+    let at = 'execute in minecraft:overworld positioned ' + core + ' run '
+    // 只对本台（30 格内）的 vent marker 生效，避免多台立方体一起喷
+    server.runCommandSilent(at + 'execute as @e[type=marker,tag=vent,distance=..30] at @s run playsound minecraft:block.candle.extinguish master @a ~ ~ ~ 0.35 1')
+    server.runCommandSilent(at + 'execute as @e[type=marker,tag=vent,distance=..30] at @s run particle minecraft:dust_color_transition 0.3 1 1 3 0 0 0.3 ~ ~1 ~ 0.25 0.25 0.25 0.02 8 force')
+    server.runCommandSilent(at + 'execute as @e[type=marker,tag=vent,distance=..30] at @s run particle minecraft:dust_color_transition 0.3 1 1 3 0 0 0.3 ~ ~-1 ~ 0.25 0.25 0.25 0.02 8 force')
+    console.info('[C4] 排气孔喷气 @' + core)
   } catch (e) { console.warn('[C4] 排气失败: ' + e) }
 }
 
@@ -3365,6 +3368,15 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     run(`setblock ${b.X0} ${b.Y1} ${FZ} kubejs:warping_vent`)
     run(`setblock ${FX + 4} ${b.Y1} ${b.Z1} kubejs:warping_vent`)
     run(`setblock ${b.X0} ${b.Y0} ${FZ - 4} kubejs:warping_vent`)
+    // 排气孔要配 marker：数据包 effects/vents 是按 tag=vent 的 marker 喷粒子的
+    let vents = [
+      [b.X1, b.Y0 + 1, b.Z1], [b.X0, b.Y0 + 5, b.Z1], [b.X1, b.Y1 - 5, b.Z0],
+      [b.X0, b.Y1, FZ], [FX + 4, b.Y1, b.Z1], [b.X0, b.Y0, FZ - 4]
+    ]
+    if (slot !== undefined && slot !== null && slot >= 0) {
+      run(`kill @e[type=marker,tag=c4vent${slot}]`)
+      vents.forEach(q => run(`summon marker ${q[0]} ${q[1]} ${q[2]} {Tags:["vent","c4vent${slot}"]}`))
+    }
   } catch (e) {}
   if (fillHole) {
     // 目的地：内侧墙面只把框梁之间的空气补成 filling（不动框梁/地板/面板/门）
@@ -3972,6 +3984,15 @@ function c4BuildTeleporter(server, slot, a, logIt) {
         + ' ' + (bb.X0 + 9) + ' ' + bb.Y0 + ' ' + (bb.Z0 + 9) + ' minecraft:air')
     } catch (eH) {}
   }
+  // 排气孔 marker：模板里 7 个 warping_vent 是死方块，数据包靠 tag=vent 的 marker 喷粒子
+  try {
+    server.runCommandSilent('execute in minecraft:overworld run kill @e[type=marker,tag=c4vent' + slot + ']')
+    ;[[4, 0, 0], [16, 0, 10], [16, 4, 16], [0, 8, 16], [16, 12, 0], [0, 16, 5], [11, 16, 16]].forEach(o => {
+      server.runCommandSilent('execute in minecraft:overworld run summon marker ' + (bb.X0 + o[0]) + ' ' + (bb.Y0 + o[1]) + ' ' + (bb.Z0 + o[2])
+        + ' {Tags:["vent","c4vent' + slot + '"]}')
+    })
+  } catch (eV) { console.warn('[C4] 排气 marker 失败: ' + eV) }
+
   // 传送器也要套一圈 structure_void 外壳；但【顶面贴着基地地板时跳过】，
   // 否则 Y1+1 那一层会把基地地板换成 structure_void。
   try {
