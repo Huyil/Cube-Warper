@@ -1761,36 +1761,59 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
         dy = Number(d.y) + 0.5
       }
 
-      // ═══ 剧场版：a 先指门 → b 黑场窗口 → c 建房间 → d 反向门 → e 校验 ═══
-      // a) 只改 destination（moveSrc=false，主世界的门原地不动）。此刻门后是还没建房间的新维度 → 黑/虚空。
-      let n = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(d.dim), dx, dy, dz, false, d.dim, idName, ext0, false, slot)
-      console.info('[C4] 剧场版 a 指门 ' + n + '/6 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
-        + '（黑场 ' + C4_PLANE_WAIT + 't 后建房间）')
+      // ═══ 动画版：先建房（房间里真实存在）→ 分步指门（C4_PLANE_WAIT 内飞过去）→ 反向门 → 校验 ═══
+      // 先建房的好处：分步指门时客户端渲染到的是新世界真实地形/房间，而不是"没建的虚空"=黑屏
+      if (!job.useFixedDest) {
+        let room0 = c4BuildRoom(server, d.dim, dx, dy, dz, ext, true)
+        if (room0 && Math.floor(dy - 8) !== room0.Y0) {
+          dy = room0.Y0 + 8.5
+          d.y = Math.round(dy - 0.5)
+          console.warn('[C4] 动画版：房间 y 被夹取 → core=' + d.y + '（房间 ' + room0.Y0 + '..' + room0.Y1 + '）')
+        }
+        console.info('[C4] 动画版 a 目的地房间先建好 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+      } else {
+        console.info('[C4] 动画版 a 复用固定房间 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+      }
 
-      // b) 黑场窗口：原包 runtime=1 的四连音 + runtime=30/70/100 的排气（不依赖数据包 running）
+      // b) 分步指门：从「上一处落点」lerp 到「新落点」，每段间隔 per tick
+      //    （没有旧落点就用 600 格外的远方，视觉上等价于"从很远飞过来"）
+      let od = job.oldDest
+      let sx0 = od ? (Number(od.x) + 0.5) : (dx + 600)
+      let sy0 = od ? (Number(od.y) + 0.5) : (dy + 120)
+      let sz0 = od ? (Number(od.z) + 0.5) : (dz + 600)
+      let steps = 14
+      let per = Math.max(1, Math.floor(C4_PLANE_WAIT / steps))
+      for (let si = 1; si <= steps; si++) {
+        let tt = si / steps
+        let px = sx0 + (dx - sx0) * tt
+        let py = sy0 + (dy - sy0) * tt
+        let pz = sz0 + (dz - sz0) * tt
+        server.scheduleInTicks(si * per, () => {
+          if (C4_BUSY !== job) return
+          try {
+            c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(d.dim), px, py, pz, false, d.dim, idName, ext0, false, slot)
+          } catch (eS) {}
+        })
+      }
+      console.info('[C4] 动画版 b ' + steps + ' 段指门（每段 ' + per + 't，共 ' + (steps * per) + 't）');
+
+      // c) 旅行音 + 三波排气（与镜头同步）
       c4TravelSounds(server, atCore)
       ;[10, 30, 50].forEach(t => server.scheduleInTicks(t, () => {
         if (C4_BUSY !== job) return
         c4VentBurst(server, slot)
       }))
 
-      // c/d/e) 黑场播完才建房间 → 反向门 → 校验（失败仍回滚私有笼子）
+      // d/e) 动画跑完 → 最后精确指一次 → 反向门 → 校验（失败仍回滚私有笼子）
       server.scheduleInTicks(C4_PLANE_WAIT, () => {
         if (C4_BUSY !== job) return
         try {
-          if (!job.useFixedDest) {
-            let room = c4BuildRoom(server, d.dim, dx, dy, dz, ext, true)
-            if (room && Math.floor(dy - 8) !== room.Y0) {
-              dy = room.Y0 + 8.5
-              d.y = Math.round(dy - 0.5)
-              console.warn('[C4] 剧场版 c 房间 y 被夹取 → core=' + d.y + '（房间 ' + room.Y0 + '..' + room.Y1 + '）')
-            }
-            console.info('[C4] 剧场版 c 建房间 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
-            try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { console.warn('[C4] 反向门失败: ' + e) }
-            // 反向门补建交给 c4CheckDest（最多 2 轮，不立刻回滚）
-          } else {
-            console.info('[C4] 剧场版 c 复用固定房间（不重建） ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
-          }
+          let n = 0
+          try {
+            n = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(d.dim), dx, dy, dz, false, d.dim, idName, ext0, false, slot)
+          } catch (eF) { n = 0 }
+          console.info('[C4] 动画版 e 最终指门 ' + n + '/6 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+          try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { console.warn('[C4] 反向门失败: ' + e) }
           c4CheckDest(server, slot, idName, d, dx, dy, dz, 0, (ok, rev, fwdOwn, fwdAll) => {
             if (!ok || n < 6 || fwdOwn < 6) {
               console.warn('[C4] 剧场版 e 校验失败：指门=' + n + '/6 本队正向=' + fwdOwn + ' 反向=' + rev
