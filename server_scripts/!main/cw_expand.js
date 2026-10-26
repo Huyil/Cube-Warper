@@ -174,6 +174,34 @@ function c4AddCell(server, cube, dir, player) {
   return true
 }
 
+// 只清并集包围盒【内部】的 structure_void —— 旧格子扩建留下的成片空位。
+//   · 外表面那圈壳在包围盒外（X0-1 / X1+1 / Y0-1 / Y1+1 / Z0-1 / Z1+1），不会被碰到；
+//   · 凹形基地“凹口里的外表面壳”虽然在包围盒内，但调用方随后必须 c4RebuildCells，
+//     重建会把外表面重新刷回来；单独调用它（不重建）可能给凹口开洞。
+//   · 只 replace structure_void，不碰玩家方块/框梁/屏障/地板。
+function c4ClearInnerVoid(server, cube) {
+  let C = c4Cwc()
+  if (!C || !cube) return 0
+  let slot = Number(cube.slot)
+  let keys = c4Cells(cube)
+  if (!keys || !keys.length) return 0
+  let b = c4CellUnion(slot, keys)
+  let run = (cmd) => {
+    try { return Number(server.runCommandSilent('execute in minecraft:overworld run ' + cmd)) || 0 } catch (e) { return 0 }
+  }
+  // 单条 fill 上限 32768：按 y 分层，和 c4RebuildCells/清环带同一套路
+  let w = b.X1 - b.X0 + 1, d = b.Z1 - b.Z0 + 1
+  let step = Math.max(1, Math.floor(30000 / Math.max(1, w * d)))
+  let n = 0
+  for (let y = b.Y0; y <= b.Y1; y += step) {
+    let y2 = Math.min(y + step - 1, b.Y1)
+    n += run('fill ' + b.X0 + ' ' + y + ' ' + b.Z0 + ' ' + b.X1 + ' ' + y2 + ' ' + b.Z1
+      + ' minecraft:air replace minecraft:structure_void')
+  }
+  if (n > 0) console.info('[C4] 清理内部结构空位 slot=' + slot + '：' + n + ' 格')
+  return n
+}
+
 // ── 旧存档迁移：只有 cube.ext、没有 cube.cells 的老存档 → 矩形展开成格子并补外边界 ──
 // 幂等：cellsMigrated 由【重建成功之后】的回调置位；中途崩服/停服 → 下次启动会重新迁移，
 // 且此时 cells 已存在 → 直接沿用（不会把 L 形基地压回矩形）。
@@ -220,10 +248,12 @@ function c4MigrateExtToCells(server, cube) {
       let C2 = c4Cwc()
       if (!C2) return
       let live = c4CubeBySlot(slot0) || cube
+      // 先清旧格子扩建留在内部的成片结构空位，再重建外边界（凹形壳会被重建刷回）
+      let cleared = c4ClearInnerVoid(server, live)
       let built = c4RebuildCells(server, live)
       live.cellsMigrated = 1
       C2.save()
-      console.info('[C4] 旧存档迁移补建完成 slot=' + slot0 + '（' + built + ' 格，外边界已重算）')
+      console.info('[C4] 旧存档迁移补建完成 slot=' + slot0 + '（' + built + ' 格，清内部空位 ' + cleared + ' 格，外边界已重算）')
     } catch (eM) { console.warn('[C4] 迁移重建失败 slot=' + slot0 + ': ' + eM) }
   })
   return n
@@ -430,6 +460,7 @@ global.CWE = {
   cellAt: c4CellAt,
   cellUnion: c4CellUnion,
   rebuild: c4RebuildCells,
+  clearInnerVoid: c4ClearInnerVoid,
   addCell: c4AddCell,
   migrateExtToCells: c4MigrateExtToCells,
   migrateAll: c4MigrateAllCubes,
