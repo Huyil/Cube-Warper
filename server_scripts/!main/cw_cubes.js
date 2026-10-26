@@ -82,8 +82,6 @@ let C4_DB = null
 // 每次脚本加载时 +1；所有会写库/动方块的延迟回调都在开头比对，旧世代直接 return。
 let C4_GEN = 1
 try { C4_GEN = (Number(global.C4_GEN) || 0) + 1; global.C4_GEN = C4_GEN } catch (eGen) {}
-// 每槽扩展锁：施工期间拒绝新的扩展（避免两次构建互相覆盖）
-let C4_EXT_BUSY = {}
 let C4_Q = []
 let C4_BUSY = null
 let C4_STATE = { worldStarted: false }
@@ -3255,7 +3253,6 @@ function c4SelfTest(server) {
 }
 
 // ---------------------------------------------------------------------------- 立方体扩展（每面 +16 格）
-let C4_EXT_TMP = {}   // 未登记槽位的临时扩展状态（仅测试用）
 function c4Ext(cube) {
   let e = (cube && cube.ext) || {}
   return {
@@ -3298,152 +3295,9 @@ function c4ShellFill(server, dimId, b, block) {
   box(b.X0 - 1, b.Y1 + 1, b.Z0 - 1, b.X1 + 1, b.Y1 + 1, b.Z1 + 1)
 }
 
-// 扩展/拆除重建专用：只清「旧外壳 + 新体积−旧体积的环带」，旧内腔（玩家建筑）一格都不碰。
-// 几何依据：
-//   · 扩展方向的那一面旧外壳正好是 ring 的第一层（旧 X1+1 == ring 的 X0），ring 一清就没了；
-//   · 其余 5 面的旧外壳和新外壳坐标完全相同，后面 c4ShellFill 会原地重刷；
-//   · 拆除方向：旧外壳在 ring 外面，所以环带要多吃 1 格（旧 X1+1）。
-// 每个方向独立判，一次只能改一个面也照样成立。
-function c4ClearShellDelta(server, dimId, cx, cy, cz, oldExt, newExt) {
-  let ob = c4RoomBox(cx, cy, cz, oldExt)
-  let nb = c4RoomBox(cx, cy, cz, newExt)
-  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { console.warn('[C4] 清环带: ' + e) } }
-  // 单条 fill 上限 32768 → 按 y 分层，和 c4BuildRoom 的清理同一个套路
-  let box = (x0, y0, z0, x1, y1, z1) => {
-    if (x1 < x0 || y1 < y0 || z1 < z0) return
-    let w = x1 - x0 + 1, d = z1 - z0 + 1
-    let step = Math.max(1, Math.floor(30000 / Math.max(1, w * d)))
-    for (let y = y0; y <= y1; y += step) {
-      let y2 = Math.min(y + step - 1, y1)
-      run(`fill ${x0} ${y} ${z0} ${x1} ${y2} ${z1} minecraft:air`)
-    }
-  }
-  // 扩展方向：环带必须【包含旧外壳那一层平面】（ob.X1 / ob.Z1 / ob.Y1 本身），
-  // 否则旧墙/旧顶壳留在新房间内部，就是玩家看到的"扩展后旧边框还在"。
-  // ±x
-  if (nb.X1 > ob.X1) box(ob.X1, nb.Y0, nb.Z0, nb.X1, nb.Y1, nb.Z1)
-  if (nb.X1 < ob.X1) box(nb.X1 + 1, ob.Y0 - 1, ob.Z0 - 1, ob.X1 + 1, ob.Y1 + 1, ob.Z1 + 1)
-  if (nb.X0 < ob.X0) box(nb.X0, nb.Y0, nb.Z0, ob.X0, nb.Y1, nb.Z1)
-  if (nb.X0 > ob.X0) box(ob.X0 - 1, ob.Y0 - 1, ob.Z0 - 1, nb.X0 - 1, ob.Y1 + 1, ob.Z1 + 1)
-  // ±z
-  if (nb.Z1 > ob.Z1) box(nb.X0, nb.Y0, ob.Z1, nb.X1, nb.Y1, nb.Z1)
-  if (nb.Z1 < ob.Z1) box(ob.X0 - 1, ob.Y0 - 1, nb.Z1 + 1, ob.X1 + 1, ob.Y1 + 1, ob.Z1 + 1)
-  if (nb.Z0 < ob.Z0) box(nb.X0, nb.Y0, nb.Z0, nb.X1, nb.Y1, ob.Z0)
-  if (nb.Z0 > ob.Z0) box(ob.X0 - 1, ob.Y0 - 1, ob.Z0 - 1, ob.X1 + 1, ob.Y1 + 1, nb.Z0 - 1)
-  // ±y（py 扩展：旧顶壳那一整层在 ring 里；-y 拆：旧地板也在里面）
-  if (nb.Y1 > ob.Y1) box(nb.X0, ob.Y1, nb.Z0, nb.X1, nb.Y1, nb.Z1)
-  if (nb.Y1 < ob.Y1) box(ob.X0 - 1, nb.Y1 + 1, ob.Z0 - 1, ob.X1 + 1, ob.Y1 + 1, ob.Z1 + 1)
-  if (nb.Y0 < ob.Y0) box(nb.X0, nb.Y0, nb.Z0, nb.X1, ob.Y0, nb.Z1)
-  if (nb.Y0 > ob.Y0) box(ob.X0 - 1, nb.Y0 - 1, ob.Z0 - 1, ob.X1 + 1, ob.Y0 - 1, ob.Z1 + 1)
-}
-
-// ---------------------------------------------------------------------------- 扩展安全闸
-// 扩展前扫描旧内腔（box 内缩 1 格）：只要还有"非框架"方块（= 玩家建筑）就拒绝，
-// 免得玩家辛苦摆的机器被环带清理/换壳误伤。空气、立方体自己的方块、藤蔓类植物不算。
-// 房间大了 49³ 三重循环会卡主线程 → 分片：每 tick 只读 C4_GATE_PER 个点；
-// 采样总数封顶 C4_GATE_MAXPTS（超过就按步长抽样 —— 宁可漏检也别卡服）。
-const C4_GATE_PER = 400
-const C4_GATE_MAXPTS = 4096
-function c4CabinOkBlock(id) {
-  if (!id) return true                              // 读不到（区块没加载）不误判
-  if (id === 'minecraft:air' || id === 'minecraft:cave_air' || id === 'minecraft:void_air') return true
-  if (id === 'minecraft:light') return true          // 房间自带隐形光源
-  // 房间自己的填充/封洞方块：早期是 kubejs:hexahedron_filling，后来改成了 minecraft:structure_void。
-  // 不在这里放行的话，任何残留的内部填充都会被当成"玩家建筑"→ 明明舱里是空的却提示先搬空。
-  if (id === 'minecraft:structure_void') return true
-  if (id.indexOf('kubejs:') === 0) return true       // 框梁/地板/filling/操控台/排气孔/按钮：全是立方体自己的
-  if (id.indexOf('vine') >= 0 || id.indexOf('lichen') >= 0 || id.indexOf('moss') >= 0) return true
-  if (id.indexOf('grass') >= 0 || id.indexOf('fern') >= 0 || id.indexOf('flower') >= 0) return true
-  if (id === 'minecraft:hanging_roots' || id === 'minecraft:dead_bush' || id === 'minecraft:sugar_cane') return true
-  return false
-}
-// 扫完调 done(非框架方块数)；0 = 内腔干净
-// S4：同步数内腔方块（只统计、不拦截）。大房间按 step 抽样，避免卡主线程太久。
-function c4CountInside(server, cx, cy, cz, ext) {
-  let n = 0
-  try {
-    let lv = c4Level(server, 'minecraft:overworld')
-    if (!lv) lv = c4OwLevel(server)
-    if (!lv) { console.warn('[C4] 内腔统计：取不到 overworld level'); return 0 }
-    let b = c4RoomBox(cx, cy, cz, ext)
-    let ox = Math.floor(cx), oy = Math.floor(cy), oz = Math.floor(cz)
-    let isBad = (id) => {
-      if (id === 'minecraft:air' || id === 'minecraft:cave_air' || id === 'minecraft:void_air') return true
-      if (id === 'minecraft:light' || id === 'minecraft:structure_void') return true
-      if (id.indexOf('kubejs:') === 0) return true
-      return false
-    }
-    let at = (x, y, z) => {
-      if (x < b.X0 + 1 || x > b.X1 - 1) return
-      if (y < b.Y0 + 1 || y > b.Y1 - 1) return
-      if (z < b.Z0 + 1 || z > b.Z1 - 1) return
-      try {
-        let bl = lv.getBlock(x, y, z)
-        if (!bl) return
-        if (!isBad(String(bl.id))) n++
-      } catch (e) {}
-    }
-    let vol = (b.X1 - b.X0 - 1) * (b.Y1 - b.Y0 - 1) * (b.Z1 - b.Z0 - 1)
-    let step = 1
-    if (vol > 40000) step = 2
-    if (vol > 150000) step = 3
-    if (step === 1) {
-      for (let y = b.Y0 + 1; y <= b.Y1 - 1; y++)
-        for (let z = b.Z0 + 1; z <= b.Z1 - 1; z++)
-          for (let x = b.X0 + 1; x <= b.X1 - 1; x++) at(x, y, z)
-    } else {
-      // 大房间：以舱体中心为原点对称取样（step 对齐中心），并额外精确扫中心 31³，避免漏掉单格
-      let half = 15
-      for (let dy = -half; dy <= half; dy++)
-        for (let dz = -half; dz <= half; dz++)
-          for (let dx = -half; dx <= half; dx++) at(ox + dx, oy + dy, oz + dz)
-      let rx = Math.floor((b.X1 - b.X0) / 2) + Math.floor(step / 2)
-      let ry = Math.floor((b.Y1 - b.Y0) / 2) + Math.floor(step / 2)
-      let rz = Math.floor((b.Z1 - b.Z0) / 2) + Math.floor(step / 2)
-      for (let dy = -ry; dy <= ry; dy += step)
-        for (let dz = -rz; dz <= rz; dz += step)
-          for (let dx = -rx; dx <= rx; dx += step) {
-            if (Math.abs(dx) <= half && Math.abs(dy) <= half && Math.abs(dz) <= half) continue
-            at(ox + dx, oy + dy, oz + dz)
-          }
-    }
-    console.info('[C4] 内腔统计 box=' + b.X0 + ',' + b.Y0 + ',' + b.Z0 + '..' + b.X1 + ',' + b.Y1 + ',' + b.Z1
-      + ' step=' + step + ' 非框架=' + n)
-  } catch (e2) { console.warn('[C4] 内腔统计异常: ' + e2) }
-  return n
-}
-function c4GateCabin(server, dimId, cx, cy, cz, ext, done) {
-  let b = c4RoomBox(cx, cy, cz, ext)
-  let x0 = b.X0 + 1, x1 = b.X1 - 1, y0 = b.Y0 + 1, y1 = b.Y1 - 1, z0 = b.Z0 + 1, z1 = b.Z1 - 1
-  if (x1 < x0 || y1 < y0 || z1 < z0) { done(0); return }
-  let dx = x1 - x0 + 1, dy = y1 - y0 + 1, dz = z1 - z0 + 1
-  let step = 1
-  while ((dx / step) * (dy / step) * (dz / step) > C4_GATE_MAXPTS) step++
-  let lv = c4Level(server, dimId)
-  if (!lv) { done(0); return }
-  let bad = 0, x = x0, y = y0, z = z0
-  let tick = () => {
-    let budget = C4_GATE_PER
-    while (budget-- > 0) {
-      try {
-        let bl = lv.getBlock(x, y, z)
-        if (bl && !c4CabinOkBlock(String(bl.id))) bad++
-      } catch (e) { console.warn('[C4] 安全闸读方块失败: ' + e) }
-      x += step
-      if (x > x1) {
-        x = x0; z += step
-        if (z > z1) { z = z0; y += step; if (y > y1) { done(bad); return } }
-      }
-    }
-    server.scheduleInTicks(1, tick)
-  }
-  tick()
-}
-
 // 与 17x17 同一套方块：地板 / 顶圈 / 四角立柱 / +z 操控台
-// clearMode：'all'   = 首次创建，整块内腔清空（原行为）
-//            'shell' = 扩展/拆除重建，只清旧外壳 + 新体积−旧体积环带，绝不碰旧内腔
-//            'none'  = 不清
+// clearMode：'all'  = 首次创建/重建，整块内腔清空；其它值 = 不清
+// oldExt 参数保留只为兼容旧调用点，已不再使用（扩建/拆除已改走 cw_expand.js 的格子模型）
 function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt, slot) {
   let b = c4RoomBox(cx, cy, cz, ext)
   // —— 越界防御（只报警 + 夹取核心 y，不中断流程）——
@@ -3473,16 +3327,14 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   }
   // 大尺寸房间整块 fill 会超过 32768 上限（49×17×49=40817）→ 命令静默失败、旧方块留在原地。
   // 按 8 格一层清，单条最大 49×8×49=19208。
-  // ⚠ 只有【首次创建】才允许清整块内腔；扩展/拆除走 'shell'，否则玩家基地会被整块铲平。
+  // 扩建/拆除已改走 cw_expand.js 的格子模型；这里只保留 'all'（首次创建/重建）。
+  // oldExt 参数保留只为兼容旧调用点，已不再使用。
   let mode = clearMode || 'all'
-  if (mode === 'shell' && !oldExt) mode = 'all'
   if (mode === 'all') {
     for (let yy = b.Y0; yy <= b.Y1; yy += 8) {
       let y2 = Math.min(yy + 7, b.Y1)
       run(`fill ${b.X0} ${yy} ${b.Z0} ${b.X1} ${y2} ${b.Z1} minecraft:air`)
     }
-  } else if (mode === 'shell') {
-    c4ClearShellDelta(server, dimId, cx, cy, cz, oldExt, ext)
   }
   if (slot !== undefined && slot !== null && slot >= 0) {
     console.info('[BUILD] slot=' + slot + ' core=' + cx + ',' + cy + ',' + cz
@@ -4570,48 +4422,6 @@ function c4CmdCabinStrip(ctx, slot) {
   c4Reply(ctx, '基地清理 slot' + slot + '：' + n + ' 格')
 }
 
-// 清掉某个 ext 尺寸对应的整个房间体积（y 分层，单条 fill 不超过 32768）
-function c4ClearRoom(server, dimId, cx, cy, cz, ext) {
-  let b = c4RoomBox(cx, cy, cz, ext)
-  for (let y = b.Y0; y <= b.Y1; y += 8) {
-    let y2 = Math.min(y + 7, b.Y1)
-    try {
-      server.runCommandSilent('execute in ' + dimId + ' run fill ' + b.X0 + ' ' + y + ' ' + b.Z0 + ' ' + b.X1 + ' ' + y2 + ' ' + b.Z1 + ' minecraft:air')
-    } catch (e) { console.warn('[C4] 清房间失败: ' + e) }
-  }
-}
-
-// 按当前 ext 重建：主世界房间 + 6 扇矩形门 + 目的地笼子（同 ext）+ 反向门
-function c4ApplyExt(server, cube, ext, player, face, verb, oldExt) {
-  let slot = cube.slot
-  let bp0 = c4BaseAnchor(slot)
-  let tp = { x: bp0.x + 0.5, y: bp0.y + 8.5, z: bp0.z + 0.5 }   // 扩展只动基地（传送器固定 17³）
-  let g = C4_GEN
-  let oldJson = JSON.stringify(oldExt || c4Ext(cube))
-  let oldExtObj = c4Ext({ ext: JSON.parse(oldJson) })
-  server.runCommandSilent('execute in minecraft:overworld run forceload add '
-    + Math.floor(tp.x - 8 - 16 * (oldExt ? oldExt.nx : 0) - 16) + ' ' + Math.floor(tp.z - 8 - 16 * (oldExt ? oldExt.nz : 0) - 16) + ' '
-    + Math.floor(tp.x + 8 + 16 * (oldExt ? oldExt.px : 0) + 80) + ' ' + Math.floor(tp.z + 8 + 16 * (oldExt ? oldExt.pz : 0) + 80))
-  server.scheduleInTicks(2, () => {
-    try {
-      if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（' + verb + ' slot' + slot + '）'); C4_EXT_BUSY[slot] = false; return }
-      C4_DB = null
-      let info2 = c4TeamOfSlot(slot)
-      let ext2 = c4Ext(info2 ? info2.cube : cube)
-      let inside = c4CountInside(server, tp.x, tp.y, tp.z, oldExtObj)
-      c4BuildRoom(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext2, false, 'shell', oldExtObj, slot)
-      // 基地扩展不碰传送器的 6 面门；3×3 洞也不自动重建（玩家自己激活的那对门保持原样）
-      let n = 0
-      let sx = 17 + 16 * (ext2.px + ext2.nx), sz = 17 + 16 * (ext2.pz + ext2.nz), sy = 17 + 16 * ext2.py
-      console.info('[C4] ' + verb + ' slot=' + slot + ' face=' + face + ' 旧ext=' + oldJson + ' 新ext=' + JSON.stringify(ext2)
-        + ' 内腔方块=' + inside + '（保留） 门=' + n)
-      c4ExpandDeny(player, verb + ' ' + face + ' 完成 · 立方体 ' + sx + '×' + sz + '×' + sy + '（本次 +16，可继续扩）')
-    } catch (e) { console.warn('[C4] ' + verb + '执行失败: ' + e); c4ExpandDeny(player, verb + '失败，见控制台') }
-    C4_EXT_BUSY[slot] = false
-  })
-}
-
-
 // 3×3 连接洞激活：基地洞 ↔ 传送器洞，各一扇「从上方跳下」的单向水平门
 //   基地洞   (bas.x+0.5, bas.y+0.80, bas.z+0.5) → 传送器地板上 4 格、洞口旁 -z2 格
 //   传送器洞 (tel.x+0.5, tel.y+0.80, tel.z+0.5) → 基地地板上 4 格、洞口旁 -z2 格
@@ -4805,7 +4615,7 @@ global.CWC = {
   name: (p) => c4Name(p),
   // 建造
   shellFill: (server, dim, box, block) => c4ShellFill(server, dim, box, block),
-  applyExt: (server, cube, ext, player, face, verb, oldExt) => c4ApplyExt(server, cube, ext, player, face, verb, oldExt),
+  owLevel: (server) => c4OwLevel(server),
   // 交互
   activateHole: (server, slot, player) => c4ActivateHole(server, slot, player),
   deactivateHole: (server, slot, player) => c4DeactivateHole(server, slot, player),
