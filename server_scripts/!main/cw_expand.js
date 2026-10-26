@@ -568,8 +568,9 @@ function c4ToolUse(event, reduce) {
       return dd < 5.5 && p.y >= a.y - 1 && p.y <= a.y + 17
     }
     let pitchNow = Number(p.pitch)
+    // 基地天花板洞：仰视才能激活；传送舱里：任意朝向右键都算（用户要求“随意方向”）
     let atBaseHole = pitchNow < -50 && nearHole(C.baseAnchor(cube.slot))
-    let atTeleHole = pitchNow > 50 && nearHole(C.teleAnchor(cube.slot))
+    let atTeleHole = nearHole(C.teleAnchor(cube.slot))
     if (atBaseHole || atTeleHole) {
       let now0 = Date.now(), k0 = 'hole:' + (reduce ? 'r:' : 'e:') + C.name(p) + ':' + cube.slot
       let last0 = C4_HOLE_CLICK[k0]

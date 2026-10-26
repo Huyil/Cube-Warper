@@ -2401,17 +2401,24 @@ PlayerEvents.loggedIn(event => {
   let cube = key ? c4CubeOfTeam(key) : null
   if (!cube || !cube.provisioned) return
   event.server.scheduleInTicks(10, () => {
-    if (c4Tp(event.server, p, 'minecraft:overworld', c4CubeX(cube.slot) + 0.5, 98.0, C4_Z + 6.0)) {
+    let sp = c4SpawnPoint(cube.slot)
+    if (c4Tp(event.server, p, 'minecraft:overworld', sp.x, sp.y, sp.z)) {
       p.tell(c4t1('cw.home.ok', cube.name))
     }
   })
 })
+// 出生点 = 传送仓按钮正前方（舱内地板上一格、按钮前 1.5 格）
+function c4SpawnPoint(slot) {
+  let b = c4BtnPos(slot)
+  return { x: b.x + 0.5, y: b.y, z: b.z - 1.5 }
+}
 PlayerEvents.respawned(event => {
   let p = event.player
   let key = c4TeamKey(c4Team(p))
   let cube = key ? c4CubeOfTeam(key) : null
   if (!cube || !cube.provisioned) return
-  c4Tp(event.server, p, 'minecraft:overworld', c4CubeX(cube.slot) + 0.5, 98.0, C4_Z + 6.0)
+  let sp = c4SpawnPoint(cube.slot)
+  c4Tp(event.server, p, 'minecraft:overworld', sp.x, sp.y, sp.z)
 })
 
 // ---------------------------------------------------------------------------- 事件：!party（兜底建队，绕过 FTB Teams 的 API-only 开关）
@@ -3207,6 +3214,10 @@ function c4CmdDoors(ctx, slot) {
 
 function c4CmdBuild(ctx, slot, force) {
   let h = c4TeamOfSlot(slot)
+  // force 重建 = 按【当前默认布局】重来：清掉旧的 btn/tele 锚点，否则老存档的 tele 兜底会把舱又拽回 78
+  if (force && h && h.cube) {
+    try { delete h.cube.btn; delete h.cube.tele; c4Save() } catch (eB) {}
+  }
   if (!force && h && h.cube && h.cube.provisioned) {
     c4ReplyT(ctx, 'cw.build.exists', [slot])
     c4ReplyT(ctx, 'cw.build.force_hint', [slot])
