@@ -34,7 +34,7 @@ const C4_CORE_Y = 105.5           // 基地核心（基地不再承载跃迁：�
 // 底面 180、顶面 196、核心 188.5；x/z 与基地同（c4CubeX(slot), C4_Z）。
 // 传送器在基地（97..113）【上方】：隧道从基地天花板（113）向上接到舱地板（180）。
 // 唯一真源是【启动按钮方块坐标】c4BtnPos(slot)，其余全部由它派生（不再"中心→面板→算子"链式推）。
-const C4_TELE_FLOOR = 180         // 传送器默认底面 y（21³ 外壳 178..198，舱体 180..196，顶面 197；在基地上方）
+const C4_TELE_FLOOR = 118         // 传送器默认底面 y（21³ 外壳 116..136，舱体 118..134，顶面 135；在基地上方、贴得近）
 const C4_TELE_Y = C4_TELE_FLOOR + 8.5   // 传送器核心 y = 188.5
 const C4_TELE_HALF = 8.5          // 核心到地板/顶面
 const C4_BASE_FLOOR = 97          // 基地默认底面 y（C4_CORE_Y - 8.5），天花板 = 底面 + 16 = 113
@@ -3105,10 +3105,10 @@ function c4CmdTele(ctx, slot, floorY) {
   let server = ctx.source.server
   let h = c4TeamOfSlot(slot)
   if (!h || !h.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
-  // 范围限制：传送器只能放在基地【上方 >=180】（基地本体占 97..113；隧道从 113 往上接）
+  // 范围限制：传送器只能放在基地【上方】(基地顶 113；21³ 外壳 fy-2..fy+18 必须避开 113 → fy >= 116)
   let fy = Math.floor(Number(floorY))
-  if (isNaN(fy) || fy < 180) {
-    c4Reply(ctx, 'y 只能 >=180（基地上方）；基地本体占 97..113，传送仓占 y..y+16')
+  if (isNaN(fy) || fy < 116) {
+    c4Reply(ctx, 'y 只能 >=116（基地上方）；基地本体占 97..113，传送仓占 y..y+16、外壳 y-2..y+18')
     return
   }
   let lvT = c4Level(server, 'minecraft:overworld')
