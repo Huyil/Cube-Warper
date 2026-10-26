@@ -4313,7 +4313,7 @@ function c4ActivateHole(server, slot, player) {
       try { server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (q[0] - 24) + ' ' + (q[1] - 24) + ' ' + (q[0] + 24) + ' ' + (q[1] + 24)) } catch (e0) {}
     })
     // ② 清旧 3×3 门（历史三代 tag 都清；绝不碰 6 面门 cw_face_*）
-    ;['cw_link', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
+    ;['cw_link', 'cw_pipe', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
       ;[[bx, bas.y + 0.5, bz], [tx, tel.y + 0.5, tz]].forEach(p => {
         try { server.runCommandSilent('execute in minecraft:overworld positioned ' + p[0] + ' ' + p[1] + ' ' + p[2]
           + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..10]') } catch (e1) {}
@@ -4348,6 +4348,28 @@ function c4ActivateHole(server, slot, player) {
         + (gtx + 1) + ' ' + tel.y + ' ' + (gtz + 1) + ' minecraft:glass')
       console.info('[C4] 隧道玻璃盖（仅传送器洞口）：' + gtx + ',' + tel.y + ',' + gtz + ' 3×3')
     } catch (eGl) { console.warn('[C4] 传送器玻璃盖失败: ' + eGl) }
+
+    // ③.7 管道里的两扇 3×3：让「舱内往上飞」和「基地往下掉」都绕过 6 面门里的 up 门
+    //   P1 y=tel.y+16(=94，舱顶)：front 朝下 → 从下面往上穿 → 送到基地地板【洞旁边】(bas.y+1, z+3)
+    //   P2 y=bas.y-1(=96，管道中)：front 朝上 → 从上面往下掉 → 送回舱内地板 (tel.y+2.5)
+    try {
+      let py1 = tel.y + 16, py2 = bas.y - 1
+      let P1 = c4SpawnLinkPortal(server, { x: tx, y: py1, z: tz }, 3, -90)
+      let P2 = c4SpawnLinkPortal(server, { x: tx, y: py2, z: tz }, 3, 90)
+      let aimPipe = (e, tag, dx, dy, dz) => {
+        if (!e) return false
+        try { e.addTag('cw_pipe'); e.addTag(tag); e.addTag('cw_slot' + slot); e.addTag('cw_id_' + cubeId); e.addTag(c4TeamTagOf(slot)) } catch (e0) {}
+        let ok = false
+        try { ok = c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'), c4Vec(dx, dy, dz), e.x, e.y, e.z) } catch (e1) { ok = false }
+        try { e.setIsVisible(true) } catch (e2) {}
+        try { c4Sync(e) } catch (e3) {}
+        return ok
+      }
+      let okP1 = aimPipe(P1, 'cw_pipe_up', bx, bas.y + 1.0, bz + 3)
+      let okP2 = aimPipe(P2, 'cw_pipe_down', tx, tel.y + 2.5, tz)
+      console.info('[C4] 管道双门 slot=' + slot + ' P1@y' + py1 + '→基地' + (okP1 ? ' OK' : ' 失败')
+        + ' / P2@y' + py2 + '→舱内' + (okP2 ? ' OK' : ' 失败'))
+    } catch (ePipe2) { console.warn('[C4] 管道双门失败: ' + ePipe2) }
 
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
@@ -4406,7 +4428,7 @@ function c4DeactivateHole(server, slot, player) {
     let bas = c4BaseAnchor(slot), tel = c4TeleAnchor(slot)
     let n = 0
     ;[[bas.x + 0.5, bas.y + 0.5, bas.z + 0.5], [tel.x + 0.5, tel.y + 0.5, tel.z + 0.5]].forEach(pt => {
-      ;['cw_link', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
+      ;['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
         try {
           server.runCommandSilent('execute in minecraft:overworld positioned ' + pt[0] + ' ' + pt[1] + ' ' + pt[2]
             + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..10]')
