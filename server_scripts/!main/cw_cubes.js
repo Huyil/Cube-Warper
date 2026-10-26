@@ -33,7 +33,7 @@ const C4_CORE_Y = 105.5           // 基地核心（基地不再承载跃迁：�
 // ── S2：传送器舱（17³）几何 ─────────────────────────────────────────────
 // 底面 y=16、顶面 y=32、核心 y=24.5；x/z 与基地同（c4CubeX(slot), C4_Z）。
 // 唯一真源是【启动按钮方块坐标】c4BtnPos(slot)，其余全部由它派生（不再"中心→面板→算子"链式推）。
-const C4_TELE_FLOOR = 10          // 传送器默认底面 y（基地地板 97 正下方 87 格）
+const C4_TELE_FLOOR = 79          // 传送器默认底面 y（79..95，顶面 96，离基地地板 97 留 1 格）
 const C4_TELE_Y = C4_TELE_FLOOR + 8.5   // 传送器核心 y = 18.5
 const C4_TELE_HALF = 8.5          // 核心到地板/顶面
 const C4_BASE_FLOOR = 97          // 基地默认底面 y（C4_CORE_Y - 8.5）
@@ -2607,6 +2607,13 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
       return 1
     })))
 
+  // 搬传送器：/cube admin tele <slot> <floorY>（只动传送器，基地不动）
+  root.then(cmdRoot.literal('tele').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0))
+      .then(cmdRoot.argument('y', IAT.integer(-60, 300)).executes(ctx => {
+        c4CmdTele(ctx, IAT.getInteger(ctx, 'slot'), IAT.getInteger(ctx, 'y')); return 1
+      }))))
+
   // 调试：/cube admin hole <slot> —— 直接激活 3×3 基地门（等价朝下双击）
   root.then(cmdRoot.literal('hole').requires(src => src.hasPermission(4))
     .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
@@ -2975,6 +2982,37 @@ function c4CmdExtReset(ctx, slot) {
       console.info('[C4] ext reset 兜底补建 slot=' + slot + '（floor/ctrl/interface/btn/light 缺则补）')
     } catch (eF) { console.warn('[C4] ext reset 兜底失败: ' + eF) }
   })
+}
+
+// 只搬传送器（基地/方块都不动）：清旧舱 → 换绑 → 新位置建舱 → 重建 3×3 隧道
+function c4CmdTele(ctx, slot, floorY) {
+  let server = ctx.source.server
+  let h = c4TeamOfSlot(slot)
+  if (!h || !h.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+  let oldA = c4TeleAnchor(slot)
+  let bx = Math.floor(c4CubeX(slot)), bz = Math.floor(C4_Z) + 7
+  let by = Math.floor(Number(floorY)) + 1
+  // ⓪ 清旧舱（17³）+ 旧链接门 + 旧玻璃
+  try {
+    server.runCommandSilent('execute in minecraft:overworld run fill ' + (oldA.x - 8) + ' ' + oldA.y + ' ' + (oldA.z - 8)
+      + ' ' + (oldA.x + 8) + ' ' + (oldA.y + 16) + ' ' + (oldA.z + 8) + ' minecraft:air')
+    server.runCommandSilent('execute in minecraft:overworld positioned ' + (oldA.x + 0.5) + ' ' + (oldA.y + 0.5) + ' ' + (oldA.z + 0.5)
+      + ' run kill @e[type=immersive_portals:portal,tag=cw_link,distance=..12]')
+    console.info('[C4] tele 清旧舱 @' + oldA.x + ',' + oldA.y + ',' + oldA.z)
+  } catch (e0) {}
+  // ① 换绑 + 落库
+  h.cube.btn = { x: bx, y: by, z: bz }
+  h.cube.tele = { x: bx, y: by - 1, z: bz - 7 }
+  c4Save()
+  // ② 新位置建舱（17³ 模板 + 6 门 + 反向门）
+  let a = c4TeleAnchor(slot)
+  try { c4BuildTeleporter(server, slot, a) } catch (e1) { console.warn('[C4] tele 建舱失败: ' + e1) }
+  // ③ 40t 后重建 3×3 隧道（等门/舱落位）
+  server.scheduleInTicks(40, () => {
+    try { c4ActivateHole(server, slot, null) } catch (e2) { console.warn('[C4] tele 隧道失败: ' + e2) }
+  })
+  console.info('[C4] tele slot=' + slot + ' 旧=' + oldA.x + ',' + oldA.y + ',' + oldA.z + ' → 新=' + a.x + ',' + a.y + ',' + a.z + '（按钮 ' + bx + ',' + by + ',' + bz + '）')
+  c4Reply(ctx, '传送器 slot' + slot + ' → floor=' + (by - 1) + ' 按钮=' + bx + ',' + by + ',' + bz)
 }
 
 function c4CmdDoors(ctx, slot) {
@@ -3911,13 +3949,14 @@ function c4BuildTeleporter(server, slot, a, logIt) {
   let bb = c4RoomBox(cx, cy, cz, ext0)
   let tmpl = 0
   try {
-    server.runCommandSilent('execute in minecraft:overworld run fill ' + (bb.X0 - 2) + ' ' + (bb.Y0 - 2) + ' ' + (bb.Z0 - 2)
-      + ' ' + (bb.X1 + 2) + ' ' + (bb.Y1 + 2) + ' ' + (bb.Z1 + 2) + ' minecraft:air')
-    tmpl = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter21 '
-      + (bb.X0 - 2) + ' ' + (bb.Y0 - 2) + ' ' + (bb.Z0 - 2)))
+    // 只清/放 17³ 本体：21³ 模板带 2 格 air 留边，贴到基地地板下方时会把基地地板一起清掉
+    server.runCommandSilent('execute in minecraft:overworld run fill ' + bb.X0 + ' ' + bb.Y0 + ' ' + bb.Z0
+      + ' ' + bb.X1 + ' ' + bb.Y1 + ' ' + bb.Z1 + ' minecraft:air')
+    tmpl = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter '
+      + bb.X0 + ' ' + bb.Y0 + ' ' + bb.Z0))
   } catch (eT) { console.warn('[C4] 传送器模板放置失败: ' + eT) }
   if (!(tmpl > 0)) {
-    console.warn('[C4] 模板 hexahedron:cw_teleporter21 不可用（ret=' + tmpl + '）→ 退回程序化建舱')
+    console.warn('[C4] 模板 hexahedron:cw_teleporter 不可用（ret=' + tmpl + '）→ 退回程序化建舱')
     try { c4BuildRoom(server, 'minecraft:overworld', cx, cy, cz, ext0, false, 'all') }
     catch (e) { console.warn('[C4] 传送器舱体失败: ' + e) }
   } else {
@@ -3927,10 +3966,13 @@ function c4BuildTeleporter(server, slot, a, logIt) {
         + ' ' + (bb.X0 + 9) + ' ' + bb.Y0 + ' ' + (bb.Z0 + 9) + ' minecraft:air')
     } catch (eH) {}
   }
-  // 传送器也要套一圈 structure_void 外壳（原来只有程序化建舱 c4BuildRoom 会铺，
-  // 走 21³ 模板的这条路径没有 → 外观/放置会漏到结构体外）
-  try { c4ShellFill(server, 'minecraft:overworld', bb, 'minecraft:structure_void') }
-  catch (eSh) { console.warn('[C4] 传送器外壳填充失败: ' + eSh) }
+  // 传送器也要套一圈 structure_void 外壳；但【顶面贴着基地地板时跳过】，
+  // 否则 Y1+1 那一层会把基地地板换成 structure_void。
+  try {
+    let basY = c4BaseAnchor(slot).y
+    if (bb.Y1 + 1 < basY) c4ShellFill(server, 'minecraft:overworld', bb, 'minecraft:structure_void')
+    else console.info('[C4] 传送器顶面贴基地地板（Y1+1=' + (bb.Y1 + 1) + ' >= ' + basY + '）→ 跳过外壳')
+  } catch (eSh) { console.warn('[C4] 传送器外壳填充失败: ' + eSh) }
   // 基地不再持有 6 面门：先清旧位置（基地核心）附近的门，再在传送器核心整组重建
   try {
     let bc0 = c4BaseCore(slot)
