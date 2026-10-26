@@ -4503,7 +4503,7 @@ function c4ActivateHole(server, slot, player) {
       }
       // 落点 y = 地板方块 + 2（站面之上 1 格）：既不会卡在门面/地板里（IP 的安全检查会拒绝传送），
       // 又只摔 1 格（无摔落伤害）。设计文档实测结论：3×3 link 落点应为「地板上方 1 格」。
-      let okP1 = aimPipe(P1, 'cw_pipe_up', tx - 2.0, tel.y + 2.0, tz)      // 舱内地板、洞口 -x 2 格
+      let okP1 = aimPipe(P1, 'cw_pipe_up', tx - 2.0, tel.y + 4.0, tz)      // 舱内地板、洞口 -x 2 格
       let okP2 = aimPipe(P2, 'cw_pipe_down', bx - 2.0, baseFloor + 2.0, bz) // 基地地板（向下扩建后跟着下移）、洞口 -x 2 格
       console.info('[C4] 管道双门 slot=' + slot + ' P_up@y' + pUpY + '→舱内' + (okP1 ? ' OK' : ' 失败')
         + ' / P_down@y' + pDownY + '→基地' + (okP2 ? ' OK' : ' 失败'))
@@ -4551,7 +4551,7 @@ function c4ActivateHole(server, slot, player) {
       return ok
     }
     // 洞口半径 1（3×3）+ 玩家半宽 0.3 → 横向让开 2 格才不会一落地又掉回去
-    let okA = wantBase ? aim(A, 'cw_link_up', tx + 2.0, tel.y + 2.0, tz) : false    // 基地 → 舱内地板（洞口 +x 2 格）
+    let okA = wantBase ? aim(A, 'cw_link_up', tx + 2.0, tel.y + 4.0, tz) : false    // 基地 → 舱内地板（洞口 +x 2 格）
     let okB = wantTele ? aim(B, 'cw_link_down', bx + 2.0, baseFloor + 2.0, bz) : false  // 舱 → 基地地板（洞口 +x 2 格）
     console.info('[C4] 隧道 slot=' + slot + ' 建门 A=' + (wantBase ? (okA ? 'OK' : '失败') : '跳过')
       + ' B=' + (wantTele ? (okB ? 'OK' : '失败') : '跳过')
