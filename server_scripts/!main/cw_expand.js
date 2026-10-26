@@ -123,12 +123,17 @@ function c4RebuildCells(server, cube) {
         run('fill ' + x1 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
       }
     })
-    // 地板最后铺：每一格都要铺自己的 Y0 层（往上叠的格子也要有地板，否则新层是空的、直接掉回下层）
-    run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
-    // 3×3 洞口只属于【基地底层那格】（gy=0）；上层是普通房间，地板整块铺满
-    if (b.gy === 0 && b.gx === 0 && b.gz === 0) {
-      let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
-      run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
+    // 地板只给【底层】铺（gy=0）。往上叠的格子是"把旧天花板打通"的挑高空间，不铺地板；
+    // 顺手把以前误铺在它 Y0 层的 platform 清掉（只 replace platform，框梁/玩家方块不动）。
+    if (b.gy === 0) {
+      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
+      // 3×3 洞口只属于【基地底层那格】（gy=0）
+      if (b.gx === 0 && b.gz === 0) {
+        let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
+        run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
+      }
+    } else {
+      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
     }
   })
   // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
