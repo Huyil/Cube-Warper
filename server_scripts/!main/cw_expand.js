@@ -78,6 +78,9 @@ function c4RebuildCells(server, cube) {
   let u = c4CellUnion(slot, keys)
   // 先把并集范围 forceload（否则超出范围的 fill 会静默失败——地板不铺、屏障不刷）
   try { run('forceload add ' + (u.X0 - 16) + ' ' + (u.Z0 - 16) + ' ' + (u.X1 + 16) + ' ' + (u.Z1 + 16)) } catch (eFL) {}
+  // 先把并集包围盒 Y0 层上的 platform 全部清空（只 replace platform，不碰玩家方块），
+  // 后面每个格子再各自铺自己的地板 —— 这样 L 形/凸形基地的凹口不会留下"多余地板"。
+  try { run('fill ' + u.X0 + ' ' + u.Y0 + ' ' + u.Z0 + ' ' + u.X1 + ' ' + u.Y0 + ' ' + u.Z1 + ' minecraft:air replace kubejs:warping_frame_platform') } catch (eUF) {}
   // 注意：不处理 ny（底面）——底面是地板，铺 barrier 会把地板变成屏障
   let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0]]
   keys.forEach(k => {
@@ -128,9 +131,8 @@ function c4RebuildCells(server, cube) {
       run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
     }
   })
-  // 最后统一铺一遍地板（整个并集包围盒，一次覆盖）——避免逐格顺序/边界列被屏障盖住
+  // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
   try {
-    run('fill ' + u.X0 + ' ' + u.Y0 + ' ' + u.Z0 + ' ' + u.X1 + ' ' + u.Y0 + ' ' + u.Z1 + ' kubejs:warping_frame_platform replace minecraft:air')
     let a0 = C.baseAnchor(slot)
     let FX = a0.x, FZ = a0.z
     run('fill ' + (FX - 1) + ' ' + u.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + u.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
