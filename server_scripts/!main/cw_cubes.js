@@ -1159,7 +1159,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   // 7) forceload 常驻（不要撤销，见上面的注释）
 
   // 8) S2：新舱 = 基地（住人）+ 传送器（跃迁机器）。等基地/门都建好后错峰建传送器，再 strip 基地按钮
-  server.scheduleInTicks(80, () => {
+  server.scheduleInTicks(200, () => {
     try {
       let a = c4TeleAnchor(slot)
       c4BuildTeleporter(server, slot, a)
@@ -1167,6 +1167,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       if (h2 && h2.cube) { h2.cube.tele = { x: a.x, y: a.y, z: a.z }; c4Save() }
       c4StripCabin(server, slot, true)
       // 3×3 洞不自动生成：由玩家手持扩展器对着【基地天花板洞】仰视右键二次确认（或 /cube admin hole）才建
+      try { let h9 = c4TeamOfSlot(slot); if (h9 && h9.cube) { h9.cube.ready = true; c4Save() } } catch (eR) {}
       console.info('[C4] 新舱迁移完成 slot' + slot + '：传送器 @' + a.x + ',' + a.y + ',' + a.z + '（按钮 ' + a.x + ',' + (a.y + 1) + ',' + (a.z + 7) + '），基地按钮已清')
     } catch (e) { console.warn('[C4] 新舱传送器迁移失败: ' + e) }
   })
@@ -2400,6 +2401,7 @@ PlayerEvents.loggedIn(event => {
   let key = c4TeamKey(c4Team(p))
   let cube = key ? c4CubeOfTeam(key) : null
   if (!cube || !cube.provisioned) return
+  if (cube.ready === false) return      // 正在建造：先别传
   event.server.scheduleInTicks(10, () => {
     let sp = c4SpawnPoint(cube.slot)
     if (c4Tp(event.server, p, 'minecraft:overworld', sp.x, sp.y, sp.z)) {
@@ -2417,6 +2419,7 @@ PlayerEvents.respawned(event => {
   let key = c4TeamKey(c4Team(p))
   let cube = key ? c4CubeOfTeam(key) : null
   if (!cube || !cube.provisioned) return
+  if (cube.ready === false) return      // 正在建造：先别传
   let sp = c4SpawnPoint(cube.slot)
   c4Tp(event.server, p, 'minecraft:overworld', sp.x, sp.y, sp.z)
 })
@@ -3218,6 +3221,8 @@ function c4CmdBuild(ctx, slot, force) {
   if (force && h && h.cube) {
     try { delete h.cube.btn; delete h.cube.tele; c4Save() } catch (eB) {}
   }
+  // 建造期间标记未就绪：玩家登录/重生先不传送，等舱体和门建完再放行
+  if (h && h.cube) { h.cube.ready = false; c4Save() }
   if (!force && h && h.cube && h.cube.provisioned) {
     c4ReplyT(ctx, 'cw.build.exists', [slot])
     c4ReplyT(ctx, 'cw.build.force_hint', [slot])
