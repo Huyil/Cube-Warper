@@ -4525,7 +4525,7 @@ function c4ActivateHole(server, slot, player) {
       }
       let nb = near(bx, bz, bas.y - 1, baseCeil + 1)
       let nt = near(tx, tz, tel.y - 1, tel.y + 17)
-      if (nb || nt) { wantBase = nb; wantTele = nt }
+      if (nb || nt) { wantBase = false; wantTele = true }   // 永远不建基地侧 A 门（会把玩家送出立方体外）
       else { wantBase = false; wantTele = true }
       console.info('[C4] 隧道激活定位：base=' + nb + ' tele=' + nt + ' → 建 ' + (wantBase ? 'A ' : '') + (wantTele ? 'B' : ''))
     }
@@ -4551,7 +4551,8 @@ function c4ActivateHole(server, slot, player) {
       return ok
     }
     // 洞口半径 1（3×3）+ 玩家半宽 0.3 → 横向让开 2 格才不会一落地又掉回去
-    let okA = wantBase ? aim(A, 'cw_link_up', tx + 2.0, tel.y + 4.0, tz) : false    // 基地 → 舱内地板（洞口 +x 2 格）
+    if (A) { try { A.discard() } catch (eD) {} }   // 旧的 A 门一律删掉
+    let okA = false    // 基地 → 舱内地板（洞口 +x 2 格）
     let okB = wantTele ? aim(B, 'cw_link_down', bx + 2.0, baseFloor + 2.0, bz) : false  // 舱 → 基地地板（洞口 +x 2 格）
     console.info('[C4] 隧道 slot=' + slot + ' 建门 A=' + (wantBase ? (okA ? 'OK' : '失败') : '跳过')
       + ' B=' + (wantTele ? (okB ? 'OK' : '失败') : '跳过')
