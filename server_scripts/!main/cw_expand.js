@@ -562,9 +562,10 @@ function c4ToolUse(event, reduce) {
     if (pitch < -50) face = 'py'
     else if (pitch > 50) { C.deny(p, '底面不可操作'); return }
     else face = ['pz', 'nx', 'nz', 'px'][Math.round(yaw / 90) % 4]   // +z/-x/-z/+x 四面都能扩
-    // +z 面原来是操控台那一面：只有传送器按钮已经搬到 y=11（新布局）时才允许扩基地 +z
-    if (face === 'pz' && Math.floor(C.btnPos(cube.slot).y) !== 11) {
-      C.deny(p, '+z 面要等传送器搬到 y=11 之后才能扩（旧基地请先按一次旧按钮完成迁移）')
+    // +z 面原来是操控台那一面：只要传送器已经搬离基地（按钮不在基地层 BASE_FLOOR+1）就允许扩 +z
+    // （以前写死 y=11，传送器改到 y=79 之后就全被挡住了）
+    if (face === 'pz' && Math.floor(C.btnPos(cube.slot).y) === (C.BASE_FLOOR + 1)) {
+      C.deny(p, '+z 面要先把传送器搬离基地（旧存档请先按一次旧按钮完成迁移）')
       return
     }
     let now = Date.now(), k = (reduce ? 'r:' : 'e:') + C.name(p)
