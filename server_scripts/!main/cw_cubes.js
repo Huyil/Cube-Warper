@@ -2442,19 +2442,6 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   // /cwp spawn · /cube spawn：回到出生点（基岩 0,0 的出生笼子）
   root.then(cmdRoot.literal('spawn').executes(ctx => { c4CmdSpawn(ctx); return 1 }))
 
-  // 扩建：实现在 cw_expand.js，命令树只留挂载点（root 级、权限 4）
-  // /cube expand <slot> <px|nx|pz|nz|py>
-  root.then(cmdRoot.literal('expand').requires(src => src.hasPermission(4))
-    .then(cmdRoot.argument('slot', IAT.integer(0))
-      .then(cmdRoot.literal('px').executes(ctx => { c4CweExpand(ctx, 'px'); return 1 }))
-      .then(cmdRoot.literal('nx').executes(ctx => { c4CweExpand(ctx, 'nx'); return 1 }))
-      .then(cmdRoot.literal('pz').executes(ctx => { c4CweExpand(ctx, 'pz'); return 1 }))
-      .then(cmdRoot.literal('nz').executes(ctx => { c4CweExpand(ctx, 'nz'); return 1 }))
-      .then(cmdRoot.literal('py').executes(ctx => { c4CweExpand(ctx, 'py'); return 1 }))))
-
-  // /cube rebuild <slot>（root 级，不是 admin）：按 cells 重算外边界，幂等自愈
-  root.then(cmdRoot.literal('rebuild').requires(src => src.hasPermission(4))
-    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => { c4CweRebuild(ctx); return 1 })))
   // 管理命令统一挂到 /cube admin（权限 4）；root 重新指向 admin 后，
   // 下面所有 root.then(...) 都会注册到 admin 子树里。
   let cubeRoot = root
@@ -2537,6 +2524,10 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
         .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'nz', true); return 1 })))
       .then(cmdRoot.literal('pz').executes(ctx => { c4CweExpand(ctx, 'pz'); return 1 })
         .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'pz', true); return 1 })))))
+
+  // /cube admin rebuild <slot>：按当前 cells 重算外边界（地板/框梁/屏障/灯），幂等自愈
+  root.then(cmdRoot.literal('rebuild').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => { c4CweRebuild(ctx); return 1 })))
 
   root.then(cmdRoot.literal('flush').requires(src => src.hasPermission(2)).executes(ctx => {
     C4_Q = []; C4_BUSY = null
