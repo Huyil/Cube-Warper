@@ -4295,6 +4295,15 @@ function c4ActivateHole(server, slot, player) {
       console.info('[C4] 5×5 管道：y ' + top + '..' + bot + ' @' + px0 + ',' + pz0 + '（中间 3×3 畅通）')
     } catch (ePipe) { console.warn('[C4] 5×5 管道失败: ' + ePipe) }
 
+    // ③.5 只给【传送器洞口】盖 3×3 玻璃（基地洞口保持敞开）：
+    //      这条玻璃同时把下面的 B 门埋住，掉下来的人落玻璃上，不会被弹回基地
+    try {
+      let gtx = Math.floor(tx), gtz = Math.floor(tz)
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gtx - 1) + ' ' + tel.y + ' ' + (gtz - 1) + ' '
+        + (gtx + 1) + ' ' + tel.y + ' ' + (gtz + 1) + ' minecraft:glass')
+      console.info('[C4] 隧道玻璃盖（仅传送器洞口）：' + gtx + ',' + tel.y + ',' + gtz + ' 3×3')
+    } catch (eGl) { console.warn('[C4] 传送器玻璃盖失败: ' + eGl) }
+
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
     // 按玩家站的位置决定建哪一侧：
