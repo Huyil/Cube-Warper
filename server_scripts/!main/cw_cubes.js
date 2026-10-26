@@ -4490,7 +4490,7 @@ function c4ActivateHole(server, slot, player) {
     //   上行：基地底面 17×17 down 门下方 bas.y-0.5（rot -90，从下往上）→ 舱内地板
     let okP1 = false, okP2 = false
     try {
-      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.95, z: tz }, 3, 90)
+      let Pdown = c4SpawnLinkPortal(server, { x: tx, y: tel.y - 0.1, z: tz }, 3, 90)
       let Pup = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 16.5, z: bz }, 3, -90)
       let aimP = (e, tag, dx, dy, dz) => {
         if (!e) return false
