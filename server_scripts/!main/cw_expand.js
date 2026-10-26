@@ -88,7 +88,6 @@ function c4RebuildCells(server, cube) {
     // ② 每个"没有邻居"的面：屏障 + 框梁边 + 外面一圈结构空位
     DIRS.forEach(dd => {
       let nk = c4CellKey(b.gx + dd[1], b.gy + dd[2], b.gz + dd[3])
-      if (set[nk]) return
       let dir = dd[0]
       let x0, x1, y0, y1, z0, z1, sx0, sx1, sy0, sy1, sz0, sz1
       if (dir === 'px') { x0 = x1 = b.X1; y0 = b.Y0; y1 = b.Y1; z0 = b.Z0; z1 = b.Z1; sx0 = sx1 = b.X1 + 1; sy0 = b.Y0; sy1 = b.Y1; sz0 = b.Z0; sz1 = b.Z1 }
@@ -97,6 +96,12 @@ function c4RebuildCells(server, cube) {
       else if (dir === 'nz') { z0 = z1 = b.Z0; x0 = b.X0; x1 = b.X1; y0 = b.Y0; y1 = b.Y1; sz0 = sz1 = b.Z0 - 1; sx0 = b.X0; sx1 = b.X1; sy0 = b.Y0; sy1 = b.Y1 }
       else if (dir === 'py') { y0 = y1 = b.Y1; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y1 + 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
       else { y0 = y1 = b.Y0; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y0 - 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
+      // ②-a 有邻居的面 = 内边框：把共享平面上的框梁清掉
+      //     （世界/旧壳在 16 格网格上本来就留着一圈 warping_frame，扩建后会变成房间里的"多余柱子"）
+      if (set[nk]) {
+        run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace kubejs:warping_frame')
+        return
+      }
       // ① 边框平面：不动（不写 filling、不恢复 air）。
       //    旧档保留原有那层（迁移前是模组填充墙）；新扩建出来的格子本来就是 air，玩家可以自己在边框上放方块。
       // ② 屏障：边框【外 1 格】（侧面 Y0+1..Y1，顶面整面）；底面不放屏障（那是地板）。
