@@ -4270,11 +4270,12 @@ function c4ActivateHole(server, slot, player) {
     }
     // 落点 = 地板上 4 格 + 横向让开洞口 2 格（-z 一侧）：
     //   洞口半径 1.5（3×3）+ 玩家半宽 0.3 → 至少让开 1.8 才不会一落地又掉回去；2 格是贴边值。
-    let okA = aim(A, 'cw_link_down', tx, tel.y + 5, tz)   // 基地 → 传送器（洞中心正下方，不错位）
-    let okB = aim(B, 'cw_link_up', bx, bas.y + 5, bz)     // 传送器 → 基地（洞中心正下方，不错位）
+    // 出口改到各自目标房间的【天花板下 0.5 格】（tel/bas 底面 +16.5 = 天花板平面 -0.5）
+    let okA = aim(A, 'cw_link_down', tx, tel.y + 16.5, tz)   // 基地 → 传送器天花板
+    let okB = aim(B, 'cw_link_up', bx, bas.y + 16.5, bz)     // 传送器 → 基地天花板
     console.info('[C4] 隧道 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → ' + tx + ',' + (tel.y + 5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + ' → ' + bx + ',' + (bas.y + 5) + ',' + bz + (okB ? ' OK' : ' 失败')
+      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → ' + tx + ',' + (tel.y + 16.5) + ',' + tz + (okA ? ' OK' : ' 失败')
+      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + ' → ' + bx + ',' + (bas.y + 16.5) + ',' + bz + (okB ? ' OK' : ' 失败')
       + '（两洞已盖 3×3 玻璃）')
     try { c4BarTeam(server, slot, '隧道: 基地 ↔ 传送器 已连通') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
