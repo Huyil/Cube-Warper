@@ -86,6 +86,7 @@ function c4Cls(name) {
   return C4_J[name]
 }
 function c4Iat() { return c4Cls('com.mojang.brigadier.arguments.IntegerArgumentType') }
+function c4Vec(x, y, z) { return new (c4Cls('net.minecraft.world.phys.Vec3'))(x, y, z) }
 function c4PortalAPI() { return c4Cls('qouteall.imm_ptl.core.api.PortalAPI') }
 function c4Rl(id) {
   if (!C4_RL) C4_RL = c4Cls('net.minecraft.resources.ResourceLocation')
