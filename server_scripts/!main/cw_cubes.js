@@ -999,6 +999,11 @@ function c4ProvisionBody(server, slot, teamName, idName) {
 
   // 1) 外壳/地板/面板/按钮/排气口（在刚清空的体积里重建；17x17 里的 structure_void 只补地板 3×3 洞）
   server.runCommandSilent(`execute positioned ${x} ${C4_BASE_Y} ${C4_Z} run function hexahedron:build_hexahedron/17x17`)
+  // 1.4) 隐藏光源（基地这间也要，否则对比目的地副本会明显偏暗）
+  try {
+    server.runCommandSilent('execute in minecraft:overworld run setblock ' + x + ' ' + (Math.round(C4_BASE_Y) - 5 + 8) + ' ' + C4_Z + ' minecraft:light[level=15]')
+    console.info('[C4] 基地隐藏光源 @' + x + ',' + (Math.round(C4_BASE_Y) - 5 + 8) + ',' + C4_Z)
+  } catch (eL) {}
   // 1.5) 把 3×3 地板洞下方那格 structure_void 之外的残余再清一次内部（保险）
   server.runCommandSilent(`execute in minecraft:overworld positioned ${x} ${C4_BASE_Y} ${C4_Z} run fill ~-7 ~-2 ~-7 ~7 ~12 ~7 air replace minecraft:structure_void`)
   // 1.6) 外壳（贴着框梁外表面那一格）整体替换成 structure_void —— 与 c4BuildRoom(false) 同一套几何，
@@ -3011,9 +3016,23 @@ function c4CmdDoors(ctx, slot) {
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
   })
-  // 反向门尺寸是从正向门复制的：正向门重建后必须一起重建，否则反向门还是旧尺寸
+  // 反向门尺寸是从正向门复制的：正向门重建后必须一起重建，否则反向门还是旧尺寸。
+  // 另外要把【历史目的地】上的旧反向门也清掉（几何改过好几轮，那些是 17×17/8.51 的残留）。
   server.scheduleInTicks(30, () => {
     try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) } catch (e6) { console.warn('[C4] doors 反向门失败: ' + e6) }
+    try {
+      let ds = (h.cube && h.cube.dests) || {}
+      for (let dk in ds) {
+        let de = ds[dk]
+        if (!de || de.x === undefined) continue
+        if (String(dk) === String(rDimId)) continue
+        try {
+          server.runCommandSilent('execute in ' + dk + ' positioned ' + (Number(de.x) + 0.5) + ' ' + (Number(de.y) + 0.5) + ' ' + (Number(de.z) + 0.5)
+            + ' run kill @e[type=immersive_portals:portal,name=!main_cube,distance=..100]')
+          console.info('[C4] 清理历史反向门 slot=' + slot + ' dim=' + dk + ' @' + de.x + ',' + de.y + ',' + de.z)
+        } catch (e7) {}
+      }
+    } catch (e8) {}
   })
   console.info('[C4] /cwp doors ' + slot + ' ext=' + JSON.stringify(ext) + ' 预载=' + chunks + ' chunks 清旧门=' + killed + ' 重建=' + made + ' 指向=' + aimed)
   c4Reply(ctx, '槽位 ' + slot + ' 门重建：清 ' + killed + ' / 建 ' + made + ' / 指 ' + aimed + '（ext=' + JSON.stringify(ext) + '）')
@@ -3312,10 +3331,12 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     run(`fill ${b.X0 + 1} ${b.Y1} ${b.Z0 + 1} ${b.X1 - 1} ${b.Y1} ${b.Z1 - 1} minecraft:structure_void replace minecraft:air`)
   }
   // 外壳（贴着框梁外表面的那一格，6 面 + 12 棱 + 8 角）：
-  //   主世界 → 整体替换成 structure_void（不是只填空气，门边就不会和框梁 z-fighting）
-  //   目的地 → 整体清成 air（不放 filling）
-  try { c4ShellFill(server, dimId, b, fillHole ? 'minecraft:air' : 'minecraft:structure_void') }
-  catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
+  //   主世界 → structure_void（不是只填空气，门边不会和框梁 z-fighting）
+  //   目的地 → 不再铺 air 外壳：目的地副本就是纯净 17³（少一圈 19³ 的挖掘，省事也省性能）
+  if (!fillHole) {
+    try { c4ShellFill(server, dimId, b, 'minecraft:structure_void') }
+    catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
+  }
   return b
 }
 // 6 扇门：位置/尺寸都按当前 ext 算（矩形门）
@@ -3329,11 +3350,14 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
 // 之前退到框梁中点（±8.0）时，+z 面的门面正好切在操控台那一格（z=8）里，
 // 导致那一格的运算符放不进去（IP 的跨门碰撞挡住了）。
 // 四面统一：门面 = 立方体外表面【再往外 1/16】（±8.5625）＝「内 15/16、外 1/16」
+// 侧面：门面 = 立方体【外表面往内 1/16 格】（核心 ±8.4375）。
+// 这样 15×15 的门边正好落在框梁内侧面，且往内退 1/16 → 斜看时射线先撞到框梁内侧面，
+// 不会从门边缝里看到主世界外部；来源门与反向门用同一张表 → 两侧严格对齐。
 const C4_FACES = {
-  w: { x: -8.0625, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
-  e: { x: 9.0625, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
-  n: { x: 0.50, y: 7.50, z: -15.0625, ext: 'nz', sign: -1 },
-  s: { x: 0.50, y: 7.50, z: 2.0625, ext: 'pz', sign: 1 },
+  w: { x: -7.9375, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
+  e: { x: 8.9375, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
+  n: { x: 0.50, y: 7.50, z: -14.9375, ext: 'nz', sign: -1 },
+  s: { x: 0.50, y: 7.50, z: 1.9375, ext: 'pz', sign: 1 },
   d: { x: 0.50, y: -0.75, z: -6.50, ext: null, sign: 0 },
   u: { x: 0.50, y: 15.75, z: -6.50, ext: 'py', sign: 1 }
 }

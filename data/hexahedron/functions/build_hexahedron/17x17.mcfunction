@@ -55,3 +55,5 @@ summon marker ~-4 ~-3 ~-8 {Tags:["vent"]}
 setblock ~8 ~-3 ~2 kubejs:warping_vent
 summon marker ~8 ~-3 ~2 {Tags:["vent"]}
 
+# Hidden light source (same as the KubeJS-built rooms)
+setblock ~ ~8 ~ minecraft:light[level=15]
