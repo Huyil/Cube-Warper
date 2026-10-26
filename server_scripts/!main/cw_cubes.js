@@ -4281,20 +4281,10 @@ function c4ActivateHole(server, slot, player) {
           + (p[0] + 1) + ' ' + (p[1] + dy0) + ' ' + (p[2] + 1) + ' minecraft:air destroy') } catch (e2) {}
       })
     })
-    // ③.5 两个洞口各盖 3×3 玻璃（构建器激活时一次性铺；玩家以后自己拆掉才能掉进去）
-    try {
-      let gbx = Math.floor(bx), gbz = Math.floor(bz), gtx = Math.floor(tx), gtz = Math.floor(tz)
-      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gbx - 1) + ' ' + bas.y + ' ' + (gbz - 1) + ' '
-        + (gbx + 1) + ' ' + bas.y + ' ' + (gbz + 1) + ' minecraft:glass')
-      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gtx - 1) + ' ' + tel.y + ' ' + (gtz - 1) + ' '
-        + (gtx + 1) + ' ' + tel.y + ' ' + (gtz + 1) + ' minecraft:glass')
-      console.info('[C4] 隧道玻璃盖：基地 @' + gbx + ',' + bas.y + ',' + gbz + ' / 传送器 @' + gtx + ',' + tel.y + ',' + gtz + '（3×3，玩家可自行拆除）')
-    } catch (eGl) { console.warn('[C4] 隧道玻璃盖失败: ' + eGl) }
-
     // ③.6 5×5 管道：基地地板洞 → 传送室顶部之间，环形补框梁（中间 3×3 保持畅通）
     try {
       let px0 = Math.floor(bx), pz0 = Math.floor(bz)
-      let top = bas.y - 1, bot = tel.y + 16      // 96 → 94（舱顶圈那一层不填，避免挡 up 面门）
+      let top = bas.y + 1, bot = tel.y + 16      // 98 → 94（从基地地板面上方一格，一直填到舱顶）
       for (let py = top; py >= bot; py--) {
         // 5×5 环 = 5×5 填框梁后再把中间 3×3 挖回空气
         server.runCommandSilent('execute in minecraft:overworld run fill ' + (px0 - 2) + ' ' + py + ' ' + (pz0 - 2) + ' '
@@ -4304,6 +4294,16 @@ function c4ActivateHole(server, slot, player) {
       }
       console.info('[C4] 5×5 管道：y ' + top + '..' + bot + ' @' + px0 + ',' + pz0 + '（中间 3×3 畅通）')
     } catch (ePipe) { console.warn('[C4] 5×5 管道失败: ' + ePipe) }
+
+    // ③.5 两个洞口各盖 3×3 玻璃（构建器激活时一次性铺；玩家以后自己拆掉才能掉进去）
+    try {
+      let gbx = Math.floor(bx), gbz = Math.floor(bz), gtx = Math.floor(tx), gtz = Math.floor(tz)
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gbx - 1) + ' ' + bas.y + ' ' + (gbz - 1) + ' '
+        + (gbx + 1) + ' ' + bas.y + ' ' + (gbz + 1) + ' minecraft:glass')
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + (gtx - 1) + ' ' + tel.y + ' ' + (gtz - 1) + ' '
+        + (gtx + 1) + ' ' + tel.y + ' ' + (gtz + 1) + ' minecraft:glass')
+      console.info('[C4] 隧道玻璃盖：基地 @' + gbx + ',' + bas.y + ',' + gbz + ' / 传送器 @' + gtx + ',' + tel.y + ',' + gtz + '（3×3，玩家可自行拆除）')
+    } catch (eGl) { console.warn('[C4] 隧道玻璃盖失败: ' + eGl) }
 
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
