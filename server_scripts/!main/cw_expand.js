@@ -135,6 +135,13 @@ function c4RebuildCells(server, cube) {
     } else {
       run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
     }
+    // 隐藏照明：天花板下面 1 格，每 5 格一颗 minecraft:light；只在空气里放，玩家方块/机器不会被覆盖
+    let ly = b.Y1 - 1
+    for (let lx = b.X0 + 2; lx <= b.X1 - 2; lx += 5) {
+      for (let lz = b.Z0 + 2; lz <= b.Z1 - 2; lz += 5) {
+        run('fill ' + lx + ' ' + ly + ' ' + lz + ' ' + lx + ' ' + ly + ' ' + lz + ' minecraft:light replace minecraft:air')
+      }
+    }
   })
   // 第二遍：格子共享边界面上的屏障会互相"伸进"邻居 1 格（例如 (-1,0,0) 的北墙 fill 到 x=48000，
   // 那正好是新走廊 (0,0,-1) 的最西一列）→ 在每格自己的 box 内把 barrier 清掉。
