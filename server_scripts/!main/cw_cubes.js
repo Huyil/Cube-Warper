@@ -2610,7 +2610,7 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   // 搬传送器：/cube admin tele <slot> <floorY>（只动传送器，基地不动）
   root.then(cmdRoot.literal('tele').requires(src => src.hasPermission(4))
     .then(cmdRoot.argument('slot', IAT.integer(0))
-      .then(cmdRoot.argument('y', IAT.integer(-60, 300)).executes(ctx => {
+      .then(cmdRoot.argument('y', IAT.integer(-512, 512)).executes(ctx => {
         c4CmdTele(ctx, IAT.getInteger(ctx, 'slot'), IAT.getInteger(ctx, 'y')); return 1
       }))))
 
@@ -2989,9 +2989,15 @@ function c4CmdTele(ctx, slot, floorY) {
   let server = ctx.source.server
   let h = c4TeamOfSlot(slot)
   if (!h || !h.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+  // 范围限制：传送器只能放在基地【下方 <=78】或【上方 >=180】（基地本体占 97..113）
+  let fy = Math.floor(Number(floorY))
+  if (isNaN(fy) || !(fy <= 78 || fy >= 180)) {
+    c4Reply(ctx, 'y 只能 <=78（基地下方）或 >=180（基地上方）；基地本体占 97..113')
+    return
+  }
   let oldA = c4TeleAnchor(slot)
   let bx = Math.floor(c4CubeX(slot)), bz = Math.floor(C4_Z) + 7
-  let by = Math.floor(Number(floorY)) + 1
+  let by = fy + 1
   // ⓪ 清旧舱（17³）+ 旧链接门 + 旧玻璃
   try {
     server.runCommandSilent('execute in minecraft:overworld run fill ' + (oldA.x - 8) + ' ' + oldA.y + ' ' + (oldA.z - 8)
