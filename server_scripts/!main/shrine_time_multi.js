@@ -174,7 +174,8 @@ BlockEvents.rightClicked('kubejs:altar_signal', event => {
 BlockEvents.rightClicked('minecraft:stone_button', event => {
   if (String(event.hand) !== 'MAIN_HAND') return
   if (!findShrineInput(event.block)) return
-  event.cancel()
+  // 不 cancel：让石按钮真正按下，给 altar_signal 一个上升沿；
+  // 这里仍然直接调一次 shrineTryStart，job key 按材料坐标去重，不会双倍结算。
   shrineTryStart(event.server, event.level, event.block, event.player)
 })
 
