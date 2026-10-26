@@ -36,11 +36,9 @@ const C4_CORE_Y = 105.5           // 基地核心（基地不再承载跃迁：�
 const C4_TELE_FLOOR = 10          // 传送器默认底面 y（基地地板 97 正下方 87 格）
 const C4_TELE_Y = C4_TELE_FLOOR + 8.5   // 传送器核心 y = 18.5
 const C4_TELE_HALF = 8.5          // 核心到地板/顶面
-const C4_TELE_TOP = C4_TELE_FLOOR + 17  // 天花板平面 27.0
 const C4_BASE_FLOOR = 97          // 基地默认底面 y（C4_CORE_Y - 8.5）
 // 门面：原包就是「17×17、平面在开口外 0.01」。之前改成 16.98/内缩 0.06 后，
 // 门面比开口小一圈又退进去 0.06，站在立方体里能沿门框看到一条 1px 的外部像素 → 现在改回贴平面。
-const C4_FACE = 8.0               // 核心到门面（= 框梁方块厚度的一半，门边被框梁包住）
 const C4_DEST_FACE = 8.0          // 目的地平面 = 门面本身
 const C4_HALF = 7.9
 // 这些范围现在指【传送器内部】
@@ -50,7 +48,6 @@ const C4_Y_MAX = C4_TELE_Y + C4_TELE_HALF      // 27.0
 const C4_CFG = 'world/cubarper-cubes.json'
 const C4_STATE_PATH = 'world/cubarper-state.json'
 const C4_DEST_MIN_SEP = 1200   // 必须 > 1000：原包 hex_anchor 的复用半径是 1000，小于它就会偷到别人的落点
-const C4_DEST_RETRY = 5        // 重新随机挑坐标最多 5 次
 const C4_DEST_NUDGE = 1024     // 撞车 → 单调外移（+x 方向，第 i 次偏移 i*1024）
 const C4_DEST_JITTER = 768     // 兼容旧代码的旧参数（新逻辑走下面的环形随机）
 const C4_DEST_RMIN = 640       // 首次/原地随机传送：离本台的最小距离（>600 格）
@@ -62,10 +59,6 @@ const C4_DEST_RMAX = 1600      // 首次/原地随机传送：最大距离（再
 //   所以 3×3 连接门必须保持可见；"看不到对面"只能靠别的方式（例如把它做深一点/只留一个洞口）。
 const C4_LINK_RENDER = true        // 3×3 连接门是否渲染（false 会同时关闭传送，不要用）
 const C4_PORTAL_SPAN = 15.0
-const C4_PORTAL_INSET = 0     // 原包门就是 17 宽、平面在壳外 0.01；再内缩会让门边和框梁之间露出黑缝
-const C4_T_PRELOAD = 186      // unfold(t=185) 之后 1 tick：用【最终】坐标做真实预载
-const C4_T_RETARGET = 195      // 数据包 85 选维度、185 建好笼子 → 186 预载、195 指门
-const C4_T_END = 225
 // 剧场版时序：t=80 先指门 → 等这么多 tick（黑场：旅行音 + 三次排气）→ 再建目的地房间
 const C4_PLANE_WAIT = 50
 
@@ -94,8 +87,6 @@ function c4Cls(name) {
 }
 function c4Iat() { return c4Cls('com.mojang.brigadier.arguments.IntegerArgumentType') }
 function c4PortalAPI() { return c4Cls('qouteall.imm_ptl.core.api.PortalAPI') }
-function c4PortalCls() { return c4Cls('qouteall.imm_ptl.core.portal.Portal') }
-function c4Vec(x, y, z) { return new (c4Cls('net.minecraft.world.phys.Vec3'))(x, y, z) }
 function c4Rl(id) {
   if (!C4_RL) C4_RL = c4Cls('net.minecraft.resources.ResourceLocation')
   let s = String(id)
@@ -110,8 +101,6 @@ function c4Rl(id) {
 function c4t(k)          { try { return Text.translatable(k) }              catch (e) { return Text.of(k) } }
 function c4t1(k, a)      { try { return Text.translatable(k, String(a)) }   catch (e) { return Text.of(k + ' ' + a) } }
 function c4t2(k, a, b)   { try { return Text.translatable(k, String(a), String(b)) } catch (e) { return Text.of(k + ' ' + a + ' ' + b) } }
-function c4t3(k, a, b, c){ try { return Text.translatable(k, String(a), String(b), String(c)) } catch (e) { return Text.of(k) } }
-
 // ---------------------------------------------------------------------------- 基础
 function c4Name(p) {
   try { if (p.username) return String(p.username) } catch (e) {}
@@ -470,13 +459,6 @@ function c4HealCubeNames() {
 // 队里没人在线时什么都不发（控制台的 [C4] 诊断行仍然照常输出）。
 // 直接读数据包算好的 dimension_seed（scoreboard players get 的返回值就是分数）。
 // 注意：数据包在 pre_runtime=215 会把种子清零，所以必须在 195 读。
-function c4SeedOf(server, slot) {
-  try {
-    let v = server.runCommandSilent('scoreboard players get @e[type=marker,tag=cw_slot' + slot + '] dimension_seed')
-    let n = Number(v)
-    return isFinite(n) ? n : null
-  } catch (e) { return null }
-}
 
 // 出生大厅（slot 0）不是可跃迁的基地，它那 6 扇门只会在贴墙处闪烁。
 // 启动时清掉大厅区域内的传送门实体即可，别处（各队基地）不受影响。
@@ -666,60 +648,7 @@ function c4ApplyPortal(server, portal, destId, destKey, destPos, coreX, coreY, c
 }
 
 // 目的地准备：① 与其它队伍的上个落点做距离检查（撞车就往 +x 推）② 提前 forceload 目的地区块
-function c4DestConflicts(ownKey, dimId, x, y, z) {
-  let out = []
-  let cubes = c4Db().cubes
-  for (let k in cubes) {
-    if (!cubes[k] || k === ownKey) continue
-    let d = c4DestOf(cubes[k], dimId)
-    if (!d) continue
-    let dx = d.x - x, dz = d.z - z
-    if (dx * dx + dz * dz < C4_DEST_MIN_SEP * C4_DEST_MIN_SEP && Math.abs(d.y - y) < 64) {
-      out.push('slot' + cubes[k].slot)
-    }
-  }
-  return out
-}
 
-function c4PrepareDest(server, slot, job) {
-  // 目标：让每次跃迁都落在【不同的地方】，同时保证与其它台的落点相距 > hex_anchor 的复用半径。
-  // 原包只有 spreadplayers ±100，而且一旦有 hex_anchor 就直接 tp 过去 —— 所以每次落点几乎一样。
-  let outer = c4OuterCore(server)
-  if (!outer) { console.warn('[C4] 目的地预判：还没看到 outer_core'); return }
-  let dimId = c4DimOf(outer)
-  // 以【自己立方体的 X】为基准做抖动，而不是以 outer_core 当前坐标为准 ——
-  // 后者可能已经被数据包的 hex_anchor 挪到别的台附近，导致"落点跑到别人家门口"。
-  let baseX = c4CubeX(slot), baseZ = C4_Z
-  let y = Math.round(outer.y)
-  let own = c4TeamOfSlot(slot)
-  let ownKey = own ? own.key : null
-
-  let moveTo = (x, z, why) => {
-    server.runCommandSilent('execute in ' + dimId + ' positioned ' + (x + 0.5) + ' ' + y + ' ' + (z + 0.5) +
-      ' run kill @e[type=marker,tag=hex_anchor,distance=..' + C4_DEST_MIN_SEP + ']')
-    server.runCommandSilent('execute in ' + dimId + ' run tp @e[type=marker,tag=outer_core] ' + (x + 0.5) + ' ' + y + ' ' + (z + 0.5))
-    let cx = Math.floor(x / 16) * 16, cz = Math.floor(z / 16) * 16
-    server.runCommandSilent('execute in ' + dimId + ' run forceload add ' + cx + ' ' + cz)
-    if (job) { job.nudgeFORCELOAD = { dim: dimId, cx: cx, cz: cz }; job.destPlan = { dim: dimId, x: x, y: y, z: z, cx: cx, cz: cz } }
-    console.info('[C4] 落点' + why + ' → ' + dimId + ' @' + x + ',' + y + ',' + z)
-  }
-
-  // ① 随机抖动（每次跃迁不同）
-  let jx = Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER)
-  let jz = Math.round((Math.random() * 2 - 1) * C4_DEST_JITTER)
-  let x = baseX + jx, z = baseZ + jz
-  moveTo(x, z, '随机抖动 ±' + C4_DEST_JITTER)
-
-  // ② 撞车：与其它台已记录的落点 < MIN_SEP → 沿 +x 单调外移
-  for (let i = 1; i <= 5; i++) {
-    let bad = c4DestConflicts(ownKey, dimId, x, y, z)
-    if (bad.length === 0) break
-    console.warn('[C4] 落点与 ' + bad.join(',') + ' 相距 <' + C4_DEST_MIN_SEP + ' → 外移 ' + (i * C4_DEST_NUDGE))
-    x = baseX + i * C4_DEST_NUDGE
-    z = baseZ + jz
-    moveTo(x, z, '避让外移 ×' + i)
-  }
-}
 
 // t=186：此时 unfold 已跑完，outer_core 才是【最终落点】——在这里做真实预载 + 记录
 function c4PreloadFinal(server, slot, job) {
@@ -759,9 +688,6 @@ function c4PreloadFinal(server, slot, job) {
 // S1：门的定位改为按 cw_face_* tag（slot 用于补 cw_team_*/cw_slot*，onlyDir 用于单面调试）
 function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId, idName, ext, moveSrc, slot, onlyDir) {
   if (!destKey) { console.error('[C4] retarget: destKey 为空'); return 0 }
-  let e = c4Ext({ ext: ext })
-  let D = C4_DEST_FACE
-  let scx = cx + 8 * (e.px - e.nx), scy = cy + 8 * e.py, scz = cz + 8 * (e.pz - e.nz)
   // S4：门的源/目标坐标全部由 c4FacePos 推导（ext 感知）；目的地固定 17³ → ext0
   let extZ = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
   let srcPos = {}, dstPos = {}
@@ -1242,7 +1168,6 @@ const C4_DIM_Y = {
 // ---------------------------------------------------------------------------- 三格插槽（原包 runtime_effects）
 // 台面（warping_controls/interface/disc_drive）在 y=98，算子方块坐在它上面一格 y=99，z=+8。
 // 原包读取/消耗顺序（pre_runtime=20/40/60）：x=+1（界面）→ x=0（控制台）→ x=-1（光盘驱动器）。
-const C4_SLOT_Y = 25          // S2：算子位跟着传送器走（y=25 一层，z=+8 内壁）
 const C4_OP_PREFIX = 'kubejs:vector_operator_'
 // 只有 #kubejs:vector 的 8 个成员会被消耗（infinite 不在标签里）；dust 是原包 runtime_effects 的粒子颜色
 const C4_VECTOR_OPS = {
@@ -1376,16 +1301,6 @@ function c4TravelBarTick(server, slot, job, n) {
 }
 
 // 自主跃迁：选维度（安全白名单）+ 高度图找地表（方案 A：不整平地形）
-const C4_SAFE_DIMS = [
-  'hexahedron:hexahedron_graveyard', 'hexahedron:stacked_rocks', 'hexahedron:copper_remains',
-  'hexahedron:dark_rocks', 'hexahedron:magma_plateau', 'hexahedron:pine_forrest',
-  'hexahedron:snowstorm', 'hexahedron:silver_forest'
-]
-function c4PickDest(server, slot) {
-  let seed = 0
-  try { seed = c4ReadSeed(server, slot) } catch (e) { seed = 0 }
-  return c4PickDestForSeed(server, slot, seed)
-}
 // 以本台为圆心、随机角度、半径 [RMIN,RMAX] 的落点偏移（保证"传送 >600 格远"且方位均匀）
 function c4RandDestOffset() {
   let ang = Math.random() * 2 * C4_PI
@@ -2305,7 +2220,6 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
   let forceRandom = false, randomDim = null
   try {
     // 同维度 = 本次跃迁的目标维度 === 玩家此刻所在维度（不是"传送器在哪个维度"，也不写死主世界）
-    let pDim = String(c4DimOf(clicker))
     let sd0 = 0
     try { sd0 = c4ReadSeed(server, slot) } catch (e0) { sd0 = 0 }
     let targetDim = String(C4_SEED_DIMS[sd0] || C4_SEED_DIMS[0])
@@ -3422,7 +3336,6 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
 // 门面平面 = 立方体外表面【再往外 1/16 格】（±8.5625）。
 // 之前退到框梁中点（±8.0）时，+z 面的门面正好切在操控台那一格（z=8）里，
 // 导致那一格的运算符放不进去（IP 的跨门碰撞挡住了）。
-const C4_FACE_OUT = 8.5625
 const C4_FACES = {
   w: { x: -8.0625, y: 7.50, z: -6.50, ext: 'nx', sign: -1 },
   e: { x: 9.0625, y: 7.50, z: -6.50, ext: 'px', sign: 1 },
@@ -3432,7 +3345,6 @@ const C4_FACES = {
   u: { x: 0.50, y: 16.0625, z: -6.50, ext: 'py', sign: 1 }
 }
 const C4_DIR2FACE = { 'x': 'e', '-x': 'w', 'z': 's', '-z': 'n', 'y': 'u', '-y': 'd' }
-const C4_FACE2DIR = { 'e': 'x', 'w': '-x', 's': 'z', 'n': '-z', 'u': 'y', 'd': '-y' }
 // 核心 → 按钮方块坐标（表以按钮为基准）
 function c4CoreToBtn(cx, cy, cz) { return { x: cx - 0.5, y: cy - 7.5, z: cz + 6.5 } }
 // 门面中心：只走 C4_FACES 表 + ext 距离（不再由 core 推导、也不再用 box 边界）
@@ -3813,29 +3725,6 @@ function c4ExpandDeny(p, msg) { try { p.tell(Text.of('⟢ ' + msg)) } catch (e) 
 
 
 // 优先【搬门】而不是删了重建：保留 entity 与目的地，只改位置/尺寸
-function c4MovePortals(server, slot, idName, ext, core) {
-  let c0 = core || { x: c4CubeX(slot) + 0.5, y: C4_CORE_Y, z: C4_Z + 0.5 }
-  let cx = c0.x, cy = c0.y, cz = c0.z
-  let T = c4FaceTargets(cx, cy, cz, ext)
-  let moved = 0
-  // S1：先补 tag（老门按几何推断），再按 cw_face_* 面把门搬到新门面
-  try { c4SyncDoorTags(server, 'minecraft:overworld', cx, cy, cz, ext, slot, idName, false, 96) }
-  catch (e) { console.warn('[C4] 搬门前打 tag 失败: ' + e) }
-  c4PortalsInDim(server, 'minecraft:overworld', cx, cy, cz, 96).forEach(e => {
-    if (c4HasTag(e, 'cw_lobby')) return
-    let d = c4FaceOf(e)
-    if (!d || !T[d]) return
-    let f = T[d]
-    try {
-      e.setOriginPos(c4Vec(f.p[0], f.p[1], f.p[2]))
-      e.setPos(f.p[0], f.p[1], f.p[2])
-      try { e.setWidth(f.w); e.setHeight(f.h) } catch (e2) { console.warn('[C4] 门尺寸设置失败: ' + e2) }
-      try { e.setIsVisible(true); c4Sync(e) } catch (e3) {}
-      moved++
-    } catch (e4) { console.warn('[C4] 搬门失败 ' + d + ': ' + e4) }
-  })
-  return moved
-}
 
 // 校验：6 个面必须各有一扇、且位置误差 < 1.6；不对就清掉重建（最多 2 次）
 function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
@@ -3976,33 +3865,6 @@ function c4ClearTeleBox(server, a) {
   return n
 }
 // 把本台的门（按 cw_id_/cw_team_ tag 全局找，不受旧位置距离限制）搬到指定舱体的 6 个门面
-function c4MoveDoorsTo(server, slot, idName, core) {
-  let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
-  let T = c4FaceTargets(core.x, core.y, core.z, ext0)
-  let teamTag = c4TeamTagOf(slot)
-  let moved = 0
-  c4All(server).forEach(e => {
-    try {
-      if (!c4IsPortal(e)) return
-      if (c4DimOf(e) !== 'minecraft:overworld') return
-      if (c4HasTag(e, 'cw_lobby')) return
-      if (c4HasTag(e, 'cw_link')) return          // 竖直链接门不参与"搬门"
-      // ⚠ 不能用 cw_team_* 单独判归属：同一队有多台立方体，team tag 会把别人的门也搬过来
-      let own = c4HasTag(e, 'cw_id_' + idName) || c4HasTag(e, 'cw_slot' + slot)
-      if (!own) return
-      let d = c4FaceOf(e)
-      if (!d) d = c4GuessFace(e, c4CubeX(slot) + 0.5, C4_CORE_Y, C4_Z + 0.5)
-      if (!d || !T[d]) return
-      let f = T[d]
-      e.setOriginPos(c4Vec(f.p[0], f.p[1], f.p[2]))
-      e.setPos(f.p[0], f.p[1], f.p[2])
-      try { e.setWidth(f.w); e.setHeight(f.h) } catch (e2) {}
-      try { e.setIsVisible(true); c4Sync(e) } catch (e3) {}
-      moved++
-    } catch (err) {}
-  })
-  return moved
-}
 // 建（或重建）一台传送器：舱体 + 6 面门 + 操控台/按钮/算子位（c4BuildRoom 已含面板/按钮）
 // 按 box 全量 forceload（按 16×16 区块逐个 add，覆盖四个角与六面中心）
 function c4DoorPreload(server, ext, core) {
@@ -4021,39 +3883,6 @@ function c4DoorPreload(server, ext, core) {
   return n
 }
 // 建门统一入口：先全量预载 → 延后 ≥20t 再搬/建 → 10t 后按 face tag 校验，不足再补一轮
-function c4BuildDoorsWithRetry(server, slot, idName, ext, core, logTag) {
-  let chunks = c4DoorPreload(server, ext, core)
-  let g = C4_GEN
-  server.scheduleInTicks(20, () => {
-    if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（建门 ' + logTag + '）'); return }
-    let made = 0
-    try { made = c4MovePortals(server, slot, idName, ext, core) } catch (e) {}
-    if (made < 6) { try { made = c4MakeRoomPortals(server, slot, idName, ext, core) } catch (e1) {} }
-    server.scheduleInTicks(10, () => {
-      if (g !== C4_GEN) return
-      let have = 0
-      try { have = c4CountFaceDoors(server, core.x, core.y, core.z, 400) } catch (e2) {}
-      // 大房间偶尔会多建出一扇（7/6）→ 先按 face 去重再判定
-      if (have > 6) {
-        try { c4SyncDoorTags(server, 'minecraft:overworld', core.x, core.y, core.z, ext, slot, idName, false, 400) } catch (e6) {}
-        try { have = c4CountFaceDoors(server, core.x, core.y, core.z, 400) } catch (e7) {}
-      }
-      if (have >= 6) {
-        console.info('[C4] 门面预载 chunks=' + chunks + ' 建成门=' + have + '/6 重试=0（' + logTag + '）')
-        return
-      }
-      let retry = 1
-      try { made = c4MakeRoomPortals(server, slot, idName, ext, core) } catch (e3) {}
-      server.scheduleInTicks(20, () => {
-        if (g !== C4_GEN) return
-        try { c4EnsureSix(server, slot, idName, core.x, core.y, core.z, ext, 2) } catch (e4) {}
-        let h2 = 0
-        try { h2 = c4CountFaceDoors(server, core.x, core.y, core.z, 400) } catch (e5) {}
-        console.info('[C4] 门面预载 chunks=' + chunks + ' 建成门=' + h2 + '/6 重试=' + retry + '（' + logTag + '）')
-      })
-    })
-  })
-}
 function c4BuildTeleporter(server, slot, a, logIt) {
   let info = c4TeamOfSlot(slot)
   let idName = (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot)
@@ -4153,49 +3982,7 @@ function c4StripCabin(server, slot, logIt) {
   return n
 }
 // 整舱平移：新位建房 + 门按 tag 跟随 + 旧位清理 + 锚点写库
-function c4MoveTeleporter(server, slot, nx, ny, nz) {
-  let oldA = c4TeleAnchor(slot)
-  let a = { x: Math.floor(Number(nx)), y: Math.floor(Number(ny)), z: Math.floor(Number(nz)) }
-  c4BuildTeleporter(server, slot, a)
-  let same = (oldA.x === a.x && oldA.y === a.y && oldA.z === a.z)
-  let removed = 0
-  if (!same) {
-    try { removed = c4ClearTeleBox(server, oldA) } catch (e) { console.warn('[C4] 旧传送器清理失败: ' + e) }
-  }
-  let info = c4TeamOfSlot(slot)
-  if (info && info.cube) { info.cube.tele = { x: a.x, y: a.y, z: a.z }; c4Save() }
-  console.info('[C4] 传送器移动 slot' + slot + '：' + oldA.x + ',' + oldA.y + ',' + oldA.z + ' → ' + a.x + ',' + a.y + ',' + a.z
-    + ' 旧舱清理=' + removed + (same ? '（同位，未清）' : ''))
-  return a
-}
 // 启动迁移：已有 10 台 → 建传送器（搬走基地的门）+ strip 基地按钮（幂等）
-function c4MigrateTeleporters(server) {
-  let db = c4Db(), cubes = db.cubes || {}, i = 0
-  for (let k in cubes) {
-    let c = cubes[k]
-    if (!c || !c.provisioned) continue
-    let slot = Number(c.slot)
-    let idx = i++
-    server.scheduleInTicks(30 + idx * 25, () => {
-      try {
-        if (!c.tele) {
-          let a = c4TeleAnchor(slot)
-          c4BuildTeleporter(server, slot, a)
-          c.tele = { x: a.x, y: a.y, z: a.z }
-          c4Save()
-          console.info('[C4] 迁移：slot' + slot + ' 传送器锚点写入 ' + JSON.stringify(c.tele))
-        } else {
-          // 传送器已存在：只有和基地不同址（新布局，传送器在下面）才连通 3×3 洞；
-          // 老存档 tele 还等于基地地板（97）→ 不动，等 /cube admin relocate 搬下去。
-          console.info('[C4] slot' + slot + ' 传送器 tele.y=' + c.tele.y + '（3×3 洞不自动生成，玩家朝下双击扩展器激活）')
-        }
-        c4StripCabin(server, slot, true)
-      } catch (e) { console.warn('[C4] 传送器迁移失败 slot' + slot + ': ' + e) }
-    })
-  }
-  if (i > 0) console.info('[C4] 传送器迁移排队：' + i + ' 台（30t 起，每台 +25t）')
-  return i
-}
 // ════════════════════════════════════════════════════════════════════════════
 // S3：基地地板中央 3×3 ↔ 传送器顶部中央 3×3（竖直门，落点不偏移）
 // 只用一扇门 A：基地地板 (x, 97, z) → 传送器顶部上方 (x, teleTop+1, z)，x/z 完全相同。
@@ -4270,31 +4057,6 @@ function c4BuildVerticalLinks(server, slot, noRetry) {
   return ok ? 1 : 0
 }
 // 3 秒穿越冷却：同一玩家 3s 内再次贴到链接门面 → 抬回门面上方（IP 没有 per-entity 冷却接口）
-function c4LinkCooldown(server) {
-  let now = Date.now()
-  let db = c4Db(), cubes = db.cubes || {}
-  try {
-    server.players.forEach(p => {
-      try {
-        if (c4DimOf(p) !== 'minecraft:overworld') return
-        for (let k in cubes) {
-          let c = cubes[k]
-          if (!c || !c.provisioned) continue
-          let P = c4LinkPoints(Number(c.slot))
-          if (Math.abs(p.y - P.src.y) > 1.6) continue
-          if (Math.abs(p.x - P.src.x) > 2.0 || Math.abs(p.z - P.src.z) > 2.0) continue
-          let key = c4Name(p) + ':' + c.slot
-          let last = C4_LINK_CD[key] || 0
-          if (now - last < 3000) {
-            try { p.teleportTo(c4Rl('minecraft:overworld'), p.x, P.src.y + 2.2, p.z, p.yaw, p.pitch) } catch (e1) {}
-            return
-          }
-          C4_LINK_CD[key] = now
-        }
-      } catch (e2) {}
-    })
-  } catch (e3) {}
-}
 function c4CmdDestSet(ctx, slot, dim, x, y, z) {
   let info = c4TeamOfSlot(slot)
   if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
@@ -4417,22 +4179,6 @@ function c4CmdBind(ctx, slot, x, y, z) {
   console.info('[C4] bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
   c4Reply(ctx, 'bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
 }
-function c4CmdTeleportMove(ctx, slot, x, y, z) {
-  let server = ctx.source.server
-  let lv = c4Level(server, 'minecraft:overworld')
-  let minY = -64, maxY = 320
-  try { if (lv) { minY = Number(lv.getMinBuildHeight()); maxY = Number(lv.getMaxBuildHeight()) } } catch (e) {}
-  let fy = Math.floor(Number(y))
-  if (isNaN(fy) || fy < minY + 2 || fy + 17 > maxY - 1) { c4Reply(ctx, 'y 不合法：' + minY + '..' + maxY + '（舱体要 17 格）'); return }
-  if (!c4TeamOfSlot(slot)) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
-  c4MoveTeleporter(server, slot, x, fy, z)
-  c4Reply(ctx, '传送器 slot' + slot + ' → ' + Math.floor(Number(x)) + ',' + fy + ',' + Math.floor(Number(z)))
-}
-function c4CmdCabinStrip(ctx, slot) {
-  if (!c4TeamOfSlot(slot)) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
-  let n = c4StripCabin(ctx.source.server, slot, true)
-  c4Reply(ctx, '基地清理 slot' + slot + '：' + n + ' 格')
-}
 
 // 3×3 连接洞激活：基地洞 ↔ 传送器洞，各一扇「从上方跳下」的单向水平门
 //   基地洞   (bas.x+0.5, bas.y+0.80, bas.z+0.5) → 传送器地板上 4 格、洞口旁 -z2 格
@@ -4452,8 +4198,6 @@ function c4ActivateHole(server, slot, player) {
     }
     let tx = tel.x + 0.5, tz = tel.z + 0.5
     let bx = bas.x + 0.5, bz = bas.z + 0.5
-    let telTop = tel.y + 17               // 天花板平面（底面 +17）
-    let basTop = bas.y + 17
     // ① forceload 两处
     ;[[tel.x, tel.z], [bas.x, bas.z]].forEach(q => {
       try { server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (q[0] - 24) + ' ' + (q[1] - 24) + ' ' + (q[0] + 24) + ' ' + (q[1] + 24)) } catch (e0) {}

@@ -225,23 +225,7 @@ function c4CellsConnected(set, start) {
   return cnt === Object.keys(set).length
 }
 // 生存消耗 1 个扩展器（主手优先，其次副手）；创造/命令路径不扣
-function c4TakeExpander(player) {
-  try {
-    if (!player || player.isCreative()) return true
-    let st = player.mainHandItem
-    if (st && st.count > 0 && String(st.id) === 'kubejs:cube_expander') { st.shrink(1); return true }
-    let off = player.offHandItem
-    if (off && off.count > 0 && String(off.id) === 'kubejs:cube_expander') { off.shrink(1); return true }
-    return false
-  } catch (e) { return true }        // 读不到手就不拦
-}
 // 拆除返还 1 个扩展器（创造不还）；用 /give，背包满会掉在脚下
-function c4GiveExpander(server, player) {
-  try {
-    if (!player || player.isCreative()) return
-    server.runCommandSilent('give ' + c4Cwc().name(player) + ' kubejs:cube_expander 1')
-  } catch (e) { console.warn('[C4] 返还扩展器失败: ' + e) }
-}
 // 加格前清掉新格里的“模组自己”的填充：旧外壳 structure_void + 旧版正方体填充。
 // 只 replace 这两种方块，玩家方块/地形一格不碰（它们会先被空气检查拦下）。
 function c4ClearNewCellFill(server, b) {
