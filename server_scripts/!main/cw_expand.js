@@ -78,9 +78,6 @@ function c4RebuildCells(server, cube) {
   let u = c4CellUnion(slot, keys)
   // 先把并集范围 forceload（否则超出范围的 fill 会静默失败——地板不铺、屏障不刷）
   try { run('forceload add ' + (u.X0 - 16) + ' ' + (u.Z0 - 16) + ' ' + (u.X1 + 16) + ' ' + (u.Z1 + 16)) } catch (eFL) {}
-  // 先把并集包围盒 Y0 层上的 platform 全部清空（只 replace platform，不碰玩家方块），
-  // 后面每个格子再各自铺自己的地板 —— 这样 L 形/凸形基地的凹口不会留下"多余地板"。
-  try { run('fill ' + u.X0 + ' ' + u.Y0 + ' ' + u.Z0 + ' ' + u.X1 + ' ' + u.Y0 + ' ' + u.Z1 + ' minecraft:air replace kubejs:warping_frame_platform') } catch (eUF) {}
   // 注意：不处理 ny（底面）——底面是地板，铺 barrier 会把地板变成屏障
   let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0]]
   keys.forEach(k => {
