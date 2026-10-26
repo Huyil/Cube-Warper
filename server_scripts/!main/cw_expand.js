@@ -94,21 +94,12 @@ function c4RebuildCells(server, cube) {
       else if (dir === 'nz') { z0 = z1 = b.Z0; x0 = b.X0; x1 = b.X1; y0 = b.Y0; y1 = b.Y1; sz0 = sz1 = b.Z0 - 1; sx0 = b.X0; sx1 = b.X1; sy0 = b.Y0; sy1 = b.Y1 }
       else if (dir === 'py') { y0 = y1 = b.Y1; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y1 + 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
       else { y0 = y1 = b.Y0; x0 = b.X0; x1 = b.X1; z0 = b.Z0; z1 = b.Z1; sy0 = sy1 = b.Y0 - 1; sx0 = b.X0; sx1 = b.X1; sz0 = b.Z0; sz1 = b.Z1 }
-      // ① 边框平面：恢复模组原来的填充墙（没迁移过的立方体就是 kubejs:hexahedron_filling）。
-      //    边框这一层保持"可见、可贴、可换方块"，和旧档手感一致；框梁四条边随后压上去。
-      run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' kubejs:hexahedron_filling')
-      // ② 屏障：挪到边框【外 1 格】，不再占边框平面本身。
-      //    侧面从地板上一格起（Y0+1），顶面整面；底面不放屏障（那是地板）。
+      // ① 边框平面：不动（不写 filling、不恢复 air）。
+      //    旧档保留原有那层（迁移前是模组填充墙）；新扩建出来的格子本来就是 air，玩家可以自己在边框上放方块。
+      // ② 屏障：边框【外 1 格】（侧面 Y0+1..Y1，顶面整面）；底面不放屏障（那是地板）。
       let by0 = (dir === 'py') ? sy0 : (y0 + 1)
       run('fill ' + sx0 + ' ' + by0 + ' ' + sz0 + ' ' + sx1 + ' ' + sy1 + ' ' + sz1 + ' minecraft:barrier')
-      // ③ 外壳：原来的 structure_void 环整体再外移一格（挡透视/放置）
-      let vx0 = b.X0, vx1 = b.X1, vy0 = b.Y0, vy1 = b.Y1, vz0 = b.Z0, vz1 = b.Z1
-      if (dir === 'px') { vx0 = vx1 = b.X1 + 2 }
-      else if (dir === 'nx') { vx0 = vx1 = b.X0 - 2 }
-      else if (dir === 'pz') { vz0 = vz1 = b.Z1 + 2 }
-      else if (dir === 'nz') { vz0 = vz1 = b.Z0 - 2 }
-      else if (dir === 'py') { vy0 = vy1 = b.Y1 + 2 }
-      run('fill ' + vx0 + ' ' + vy0 + ' ' + vz0 + ' ' + vx1 + ' ' + vy1 + ' ' + vz1 + ' minecraft:structure_void')
+      // ③ 不再铺 structure_void 外壳（屏障就够了；旧档外面本来还有自己的填充壳）
       // 底面下方那格：结构空位（不再放屏障）
       if (b.gy === 0) run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:structure_void')
       // 框梁：这一面四条边（让外壳看起来还是立方体）
@@ -158,6 +149,7 @@ function c4CellEmptyForExpand(id) {
   return !id || id === 'minecraft:air' || id === 'minecraft:cave_air' || id === 'minecraft:void_air'
     || id === 'minecraft:light' || id === 'minecraft:structure_void'
     || id === 'kubejs:hexahedron_filling'    // 旧版立方体外壳（隐形、无碰撞的“正方体”）
+    || id === 'minecraft:barrier'            // 共享面外 1 格那层屏障（c4ClearNewCellFill 会清）
 }
 function c4CellEmptyForReduce(id) {
   if (c4CellEmptyForExpand(id)) return true
@@ -171,14 +163,10 @@ function c4CellScan(server, b, dir, forReduce) {
   let lv = C.owLevel(server)
   if (!lv) return { ok: true }        // 读不到方块就不拦（避免误伤）
   let x0 = b.X0, x1 = b.X1, y0 = b.Y0, y1 = b.Y1, z0 = b.Z0, z1 = b.Z1
-  // 扩建：共享面那 2 层（边框填充 + 外 1 格屏障）属于旧基地外壳，由 c4ClearNewCellFill 清掉，
-  // 不参与"目标格是否为空"的判定；否则永远扩不出去（屏障不是空气）。
+  // 扩建：整格都扫（共享面那层的填充/屏障已列入"可接受"，由 c4ClearNewCellFill 清掉），
+  // 这样目标格里真有人放的方块仍然会被拦下。
+  // 拆除：只扫内部 15³（边界是基地自己的框梁/地板/屏障）。
   if (forReduce) { x0++; x1--; y0++; y1--; z0++; z1-- }
-  else if (dir === 'px') x0 += 2
-  else if (dir === 'nx') x1 -= 2
-  else if (dir === 'pz') z0 += 2
-  else if (dir === 'nz') z1 -= 2
-  else if (dir === 'py') y0 += 2
   if (x1 < x0 || y1 < y0 || z1 < z0) return { ok: true }
   let okId = forReduce ? c4CellEmptyForReduce : c4CellEmptyForExpand
   let bad = 0, first = ''
