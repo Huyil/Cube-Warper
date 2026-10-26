@@ -100,6 +100,7 @@ function c4RebuildCells(server, cube) {
       //     （世界/旧壳在 16 格网格上本来就留着一圈 warping_frame，扩建后会变成房间里的"多余柱子"）
       if (set[nk]) {
         run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace kubejs:warping_frame')
+        run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace minecraft:barrier')
         return
       }
       // ① 边框平面：不动（不写 filling、不恢复 air）。
@@ -147,15 +148,6 @@ function c4RebuildCells(server, cube) {
         run('fill ' + lx + ' ' + ly + ' ' + lz + ' ' + lx + ' ' + ly + ' ' + lz + ' minecraft:light replace minecraft:air')
       }
     }
-  })
-  // 第二遍：格子共享边界面上的屏障会互相"伸进"邻居 1 格（例如 (-1,0,0) 的北墙 fill 到 x=48000，
-  // 那正好是新走廊 (0,0,-1) 的最西一列）→ 在每格自己的 box 内把 barrier 清掉。
-  // 每格自己的外墙屏障都在 box 的 ±1 格外，不会被误删。
-  keys.forEach(k => {
-    let b = c4CellBox(slot, k)
-    run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
-  run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame')
-  run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
   })
   // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
   try {
