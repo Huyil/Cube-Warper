@@ -548,8 +548,16 @@ function c4ToolUse(event, reduce) {
           return
         }
         C4_HOLE_CLICK[k0] = 0
-        if (reduce) C.deactivateHole(server, cube.slot, p)
-        else C.activateHole(server, cube.slot, p)
+        if (reduce) { C.deactivateHole(server, cube.slot, p); return }
+        // 激活要消耗 1 个扩展器（创造模式不扣）
+        try {
+          if (!p.isCreative()) {
+            let st = p.mainHandItem
+            if (!st || st.count <= 0 || String(st.id) !== 'kubejs:cube_expander') { C.deny(p, '手里没有立方体扩展器'); return }
+            st.shrink(1)
+          }
+        } catch (eC) { console.warn('[C4] 扣扩展器失败: ' + eC) }
+        C.activateHole(server, cube.slot, p)
         return
       }
     }

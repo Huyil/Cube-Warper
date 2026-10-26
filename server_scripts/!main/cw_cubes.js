@@ -4307,10 +4307,23 @@ function c4ActivateHole(server, slot, player) {
 
     // ④ 建两扇门（rot=90 = 从上方落下穿过；无反向门）
     // 门面沉在洞里「离地板顶 1/5 格」处（= 地板方块底 +0.8）：站洞口边缘不会误触，掉下去才过门
-    // 两扇门：基地洞 → 传送器正下方；传送器洞 → 基地正下方（回程）。
-    // 两个洞口都被玻璃盖住（上一步）→ 平时不会误掉；玩家拆掉哪边就能从哪边下去。
-    let A = c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.80, z: bz }, 3, 90)
-    let B = c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.50, z: tz }, 3, 90)
+    // 按玩家站的位置决定建哪一侧：
+    //   站在传送器洞口 → 只建「底部通往基地」那一扇（B）
+    //   站在基地洞口   → 只建基地侧那一扇（A）
+    //   管理员命令（player=null）→ 两侧都建
+    let wantBase = true, wantTele = true
+    if (player) {
+      let near = (a) => {
+        let dx = player.x - (a.x + 0.5), dz = player.z - (a.z + 0.5)
+        return Math.sqrt(dx * dx + dz * dz) < 6.0 && Math.abs(player.y - a.y) < 9
+      }
+      let nb = near(bas), nt = near(tel)
+      if (nb || nt) { wantBase = nb; wantTele = nt }
+      else { wantBase = false; wantTele = true }
+      console.info('[C4] 隧道激活定位：base=' + nb + ' tele=' + nt + ' → 建 ' + (wantBase ? 'A ' : '') + (wantTele ? 'B' : ''))
+    }
+    let A = wantBase ? c4SpawnLinkPortal(server, { x: bx, y: bas.y + 0.80, z: bz }, 3, 90) : null
+    let B = wantTele ? c4SpawnLinkPortal(server, { x: tx, y: tel.y + 0.50, z: tz }, 3, 90) : null
 
     let aim = (e, tag, dx, dy, dz) => {
       if (!e) return false
@@ -4333,12 +4346,11 @@ function c4ActivateHole(server, slot, player) {
     // 落点 = 地板上 4 格 + 横向让开洞口 2 格（-z 一侧）：
     //   洞口半径 1.5（3×3）+ 玩家半宽 0.3 → 至少让开 1.8 才不会一落地又掉回去；2 格是贴边值。
     // 出口改到各自目标房间的【天花板下 0.5 格】（tel/bas 底面 +16.5 = 天花板平面 -0.5）
-    let okA = aim(A, 'cw_link_down', tx, tel.y + 16.5, tz)   // 基地 → 传送器天花板
-    let okB = aim(B, 'cw_link_up', bx, bas.y + 16.5, bz)     // 传送器 → 基地天花板
-    console.info('[C4] 隧道 slot=' + slot
-      + ' 基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' → ' + tx + ',' + (tel.y + 16.5) + ',' + tz + (okA ? ' OK' : ' 失败')
-      + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + ' → ' + bx + ',' + (bas.y + 16.5) + ',' + bz + (okB ? ' OK' : ' 失败')
-      + '（两洞已盖 3×3 玻璃）')
+    let okA = wantBase ? aim(A, 'cw_link_down', tx, tel.y + 16.5, tz) : false   // 基地 → 传送器天花板
+    let okB = wantTele ? aim(B, 'cw_link_up', bx, bas.y + 16.5, bz) : false     // 传送器 → 基地天花板
+    console.info('[C4] 隧道 slot=' + slot + ' 建门 A=' + (wantBase ? (okA ? 'OK' : '失败') : '跳过')
+      + ' B=' + (wantTele ? (okB ? 'OK' : '失败') : '跳过')
+      + '（基地洞@' + bx + ',' + (bas.y + 0.80) + ',' + bz + ' / 传送器洞@' + tx + ',' + (tel.y + 0.50) + ',' + tz + '）')
     try { c4BarTeam(server, slot, '隧道: 基地 ↔ 传送器 已连通') } catch (e3) {}
     return (okA ? 1 : 0) + (okB ? 1 : 0)
   } catch (e) { console.warn('[C4] 3×3 连接洞激活失败: ' + e); return 0 }
