@@ -120,13 +120,12 @@ function c4RebuildCells(server, cube) {
         run('fill ' + x1 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y0 + ' ' + z1 + ' kubejs:warping_frame')
       }
     })
-    // 地板最后铺：这一层必须是 platform（侧面屏障只到 Y0+1，不会覆盖它）
-    if (b.gy === 0) {
-      run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
-      if (b.gx === 0 && b.gz === 0) {
-        let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
-        run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
-      }
+    // 地板最后铺：每一格都要铺自己的 Y0 层（往上叠的格子也要有地板，否则新层是空的、直接掉回下层）
+    run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform')
+    // 3×3 洞口只属于【基地底层那格】（gy=0）；上层是普通房间，地板整块铺满
+    if (b.gy === 0 && b.gx === 0 && b.gz === 0) {
+      let FX = Math.floor((b.X0 + b.X1) / 2), FZ = Math.floor((b.Z0 + b.Z1) / 2)
+      run('fill ' + (FX - 1) + ' ' + b.Y0 + ' ' + (FZ - 1) + ' ' + (FX + 1) + ' ' + b.Y0 + ' ' + (FZ + 1) + ' minecraft:air')
     }
   })
   // 最后统一铺一遍地板（整个并集包围盒，一次覆盖）——避免逐格顺序/边界列被屏障盖住
@@ -163,10 +162,15 @@ function c4CellScan(server, b, dir, forReduce) {
   let lv = C.owLevel(server)
   if (!lv) return { ok: true }        // 读不到方块就不拦（避免误伤）
   let x0 = b.X0, x1 = b.X1, y0 = b.Y0, y1 = b.Y1, z0 = b.Z0, z1 = b.Z1
-  // 扩建：整格都扫（共享面那层的填充/屏障已列入"可接受"，由 c4ClearNewCellFill 清掉），
-  // 这样目标格里真有人放的方块仍然会被拦下。
+  // 扩建：跳过与旧基地共享的那 1 层（那里是旧格的地板/框梁/屏障/填充，加格时本来就会清掉），
+  //       其余整格都扫 —— 目标格里真有人放的方块仍然会被拦下。
   // 拆除：只扫内部 15³（边界是基地自己的框梁/地板/屏障）。
   if (forReduce) { x0++; x1--; y0++; y1--; z0++; z1-- }
+  else if (dir === 'px') x0++
+  else if (dir === 'nx') x1--
+  else if (dir === 'pz') z0++
+  else if (dir === 'nz') z1--
+  else if (dir === 'py') y0++
   if (x1 < x0 || y1 < y0 || z1 < z0) return { ok: true }
   let okId = forReduce ? c4CellEmptyForReduce : c4CellEmptyForExpand
   let bad = 0, first = ''
