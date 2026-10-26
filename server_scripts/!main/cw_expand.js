@@ -154,6 +154,7 @@ function c4RebuildCells(server, cube) {
   keys.forEach(k => {
     let b = c4CellBox(slot, k)
     run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
+  run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame')
   })
   // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
   try {
@@ -175,6 +176,7 @@ function c4CellEmptyForExpand(id) {
     || id === 'minecraft:light' || id === 'minecraft:structure_void'
     || id === 'kubejs:hexahedron_filling'    // 旧版立方体外壳（隐形、无碰撞的“正方体”）
     || id === 'minecraft:barrier'            // 共享面外 1 格那层屏障（c4ClearNewCellFill 会清）
+    || id === 'kubejs:warping_frame'         // 世界 16 格网格上的框梁，同样会被清掉
 }
 function c4CellEmptyForReduce(id) {
   if (c4CellEmptyForExpand(id)) return true
@@ -255,6 +257,7 @@ function c4ClearNewCellFill(server, b) {
   run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:hexahedron_filling')
   // 边框外 1 格那层屏障（新格子里会落进去的那一面）也要一起清掉
   run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
+  run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame')
 }
 // 拆掉一格：清整格体积 + 该格外表面那两圈（外 1 格屏障 / 外 2 格结构空位），随后由 c4RebuildCells 把并集外边界补回
 function c4ClearRemovedCell(server, b, set2) {
@@ -303,11 +306,7 @@ function c4AddCell(server, cube, dir, player, force) {
       return { ok: false, reason: 'air', msg: chk.msg }
     }
   }
-  // ② 生存模式扣 1 个扩展器（创造/命令路径不扣）
-  if (player && !player.isCreative() && !c4TakeExpander(player)) {
-    C.deny(player, '扩建需要 1 个立方体扩展器（生存模式每格消耗 1 个）')
-    return { ok: false, reason: 'item' }
-  }
+  // ② 扩建不再检查/消耗扩展器物品（按需求忽略物品检测）
   // ③ 只 forceload，不再清空整格（目标格已验空）
   try {
     server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (b.X0 - 16) + ' ' + (b.Z0 - 16) + ' ' + (b.X1 + 16) + ' ' + (b.Z1 + 16))
@@ -481,8 +480,7 @@ function c4DoReduce(server, cube, face, player) {
   cube.cells = Object.keys(set)
   C.save()
   c4RebuildCells(server, cube)
-  c4GiveExpander(server, player)
-  C.deny(player, '拆除完成：-16 格（剩余 ' + cube.cells.length + ' 格）' + (player.isCreative() ? '' : '，返还扩展器 ×1'))
+  C.deny(player, '拆除完成：-16 格（剩余 ' + cube.cells.length + ' 格）')
 }
 
 // /cube expand <slot> <px|nx|pz|nz|py> [force]（root 级；/cube admin expand 保留为别名）
