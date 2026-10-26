@@ -155,6 +155,7 @@ function c4RebuildCells(server, cube) {
     let b = c4CellBox(slot, k)
     run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
   run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame')
+  run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
   })
   // 只补底层那格的 3×3 洞口（不再按并集包围盒整片铺地板：L 形/凸形基地会在凹口铺出多余地板）
   try {
@@ -177,6 +178,7 @@ function c4CellEmptyForExpand(id) {
     || id === 'kubejs:hexahedron_filling'    // 旧版立方体外壳（隐形、无碰撞的“正方体”）
     || id === 'minecraft:barrier'            // 共享面外 1 格那层屏障（c4ClearNewCellFill 会清）
     || id === 'kubejs:warping_frame'         // 世界 16 格网格上的框梁，同样会被清掉
+    || id === 'kubejs:warping_frame_platform' // 旧档地板多出的一格边沿（扩建时会清）
 }
 function c4CellEmptyForReduce(id) {
   if (c4CellEmptyForExpand(id)) return true
@@ -258,6 +260,7 @@ function c4ClearNewCellFill(server, b) {
   // 边框外 1 格那层屏障（新格子里会落进去的那一面）也要一起清掉
   run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace minecraft:barrier')
   run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame')
+  run('fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air replace kubejs:warping_frame_platform')
 }
 // 拆掉一格：清整格体积 + 该格外表面那两圈（外 1 格屏障 / 外 2 格结构空位），随后由 c4RebuildCells 把并集外边界补回
 function c4ClearRemovedCell(server, b, set2) {
