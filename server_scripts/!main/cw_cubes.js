@@ -60,7 +60,8 @@ const C4_DEST_RMAX = 1600      // 首次/原地随机传送：最大距离（再
 const C4_LINK_RENDER = true        // 3×3 连接门是否渲染（false 会同时关闭传送，不要用）
 const C4_PORTAL_SPAN = 15.0
 // 剧场版时序：t=80 先指门 → 等这么多 tick（黑场：旅行音 + 三次排气）→ 再建目的地房间
-const C4_PLANE_WAIT = 100   // 黑场窗口 = 100t（5s，对齐原包 t=85→t=185）
+const C4_PLANE_WAIT = 140   // 黑场窗口 = 140t（7s）：原包临界值是「指门后 ~78t 客户端才卸完旧世界」，
+                            // 这里留 140t 余量，专门防客户端 ClientWorldLoader 并发崩溃；想更保险可加到 200
 
 // ⚠ KubeJS 的 Rhino 里 Math.PI / Math.E 是 undefined（Math 只有方法，没有常量）→ 必须用字面量。
 // 以前 c4Seat 里写 Math.PI：a 算出 NaN → 座位 x/z 全 NaN → 玩家被传到 (NaN,NaN)。
