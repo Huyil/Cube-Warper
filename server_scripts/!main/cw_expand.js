@@ -173,6 +173,8 @@ function c4CellEmptyForReduce(id) {
   if (c4CellEmptyForExpand(id)) return true
   if (id === 'minecraft:barrier') return true
   if (id.indexOf('kubejs:') === 0) return true
+  // 流体也忽略：水/熔岩不挡拆除（拆格时整格会清成空气）
+  if (id === 'minecraft:water' || id === 'minecraft:lava') return true
   return false
 }
 function c4CellScan(server, b, dir, forReduce) {
