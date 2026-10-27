@@ -290,8 +290,9 @@ function c4CellsConnected(set, start) {
   }
   return cnt === Object.keys(set).length
 }
-// 生存消耗 1 个扩展器（主手优先，其次副手）；创造/命令路径不扣
-// 拆除返还 1 个扩展器（创造不还）；用 /give，背包满会掉在脚下
+// 扩建成功 = 消耗 1 个扩展器（玩家道具路径；创造模式不扣，命令路径不扣）
+// 拆除成功 = 返还 1 个扩展器（玩家道具路径；命令路径不还）
+// 扣/还都挂在 c4ToolUse 里：只有 c4DoExpand / c4DoReduce 返回 ok 才动背包。
 // 加格前清掉新格里的“模组自己”的填充：旧外壳 structure_void + 旧版正方体填充。
 // 只 replace 这两种方块，玩家方块/地形一格不碰（它们会先被空气检查拦下）。
 function c4ClearNewCellFill(server, b) {
@@ -373,7 +374,8 @@ function c4AddCell(server, cube, dir, player, force) {
       return { ok: false, reason: 'air', msg: chk.msg, firstId: chk.firstId, x: chk.x, y: chk.y, z: chk.z, bad: chk.bad }
     }
   }
-  // ② 扩建不再检查/消耗扩展器物品（按需求忽略物品检测）
+  // ② 扩展器消耗不在这一层：命令路径（/cube expand）不扣不还；
+  //    玩家道具路径由 c4ToolUse 在 c4DoExpand 返回 ok 后扣 1 个（这里只负责加格）。
   // ③ 只 forceload，不再清空整格（目标格已验空）
   try {
     server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (b.X0 - 16) + ' ' + (b.Z0 - 16) + ' ' + (b.X1 + 16) + ' ' + (b.Z1 + 16))
@@ -536,10 +538,10 @@ function c4MigrateExtToCells(server, cube) {
       let built = c4RebuildCells(server, live)
       live.cellsMigrated = 1
       C2.save()
-      // 迁移也包含上下通道：重新建 5×5 管道 + 两扇互指 3×3（幂等，不碰 17×17）
+      // 迁移也包含上下通道：重新打通 5×5 管道 + 清旧 3×3，并按开关状态校正舱底 down 面（幂等）
       let hole = 0
-      try { hole = C2.activateHole(server, slot0, null) } catch (eH) { console.warn('[C4] 迁移补通道失败 slot=' + slot0 + ': ' + eH) }
-      console.info('[C4] 旧存档迁移补建完成 slot=' + slot0 + '（' + built + ' 格，清内部空位 ' + cleared + ' 格，边框扩格 ' + grown + '，通道门=' + hole + '，外边界已重算）')
+      try { hole = C2.syncHole(server, slot0) } catch (eH) { console.warn('[C4] 迁移补通道失败 slot=' + slot0 + ': ' + eH) }
+      console.info('[C4] 旧存档迁移补建完成 slot=' + slot0 + '（' + built + ' 格，清内部空位 ' + cleared + ' 格，边框扩格 ' + grown + '，隧道同步清 3×3=' + hole + '，外边界已重算）')
     } catch (eM) { console.warn('[C4] 迁移重建失败 slot=' + slot0 + ': ' + eM) }
   })
   return n
@@ -570,58 +572,86 @@ ServerEvents.tick(event => {
 // 扩展器 / 拆除器
 // ════════════════════════════════════════════════════════════════════════════
 let C4_EXP_CLICK = {}
-let C4_HOLE_CLICK = {}   // 3×3 连接洞二次确认
+let C4_HOLE_CLICK = {}   // 隧道开关（舱底 down 面）二次确认
 
+// 主手是不是立方体扩展器（"扩建消耗 1 个"的前置检查；创造模式也要手上有）
+function c4HasExpanderInHand(p) {
+  try {
+    let st = p.mainHandItem
+    return !!(st && st.count > 0 && String(st.id) === 'kubejs:cube_expander')
+  } catch (e) { return false }
+}
+// 返还 1 个扩展器：优先 p.give(Item.of(...))，退回 p.giveInHand(...)，最后退回 /give 指令
+function c4GiveExpander(p, n) {
+  let cnt = Number(n) || 1
+  let id = 'kubejs:cube_expander'
+  let stack = null
+  try { stack = Item.of(id, cnt) } catch (e0) { stack = null }
+  try { p.give(stack); return 'give' } catch (e1) {}
+  try { p.giveInHand(stack); return 'giveInHand' } catch (e2) {}
+  try {
+    let nm = ''
+    try { nm = String(p.username) } catch (e3) { try { nm = String(p.getUsername()) } catch (e4) {} }
+    if (nm) {
+      p.server.runCommandSilent('give ' + nm + ' ' + id + ' ' + cnt)
+      return 'command'
+    }
+  } catch (e5) {}
+  console.warn('[C4] 返还扩展器失败（give / giveInHand / 指令都不可用）')
+  return 'none'
+}
+// 返回 true = 真的加了一格（调用方据此扣 1 个扩展器）；失败/被取消一律 false
 function c4DoExpand(server, cube, face, player) {
   let C = c4Cwc()
-  if (!C || !cube) return
-  if (face === 'py') { C.deny(player, '已禁用向上扩展，只能向下（ny）'); return }
+  if (!C || !cube) return false
+  if (face === 'py') { C.deny(player, '已禁用向上扩展，只能向下（ny）'); return false }
   if (face !== 'px' && face !== 'nx' && face !== 'pz' && face !== 'nz' && face !== 'ny') {
     C.deny(player, '该面不可扩展')
-    return
+    return false
   }
   let r = c4AddCell(server, cube, face, player, false)
-  if (r && r.ok) C.deny(player, '扩建完成：+16 格（' + face + '，当前 ' + c4Cells(cube).length + ' 格）')
+  return !!(r && r.ok)
 }
 
 // 拆除：目标 = 玩家所在格 + 朝向相邻格；起始 17³(0,0,0) 不可拆；拆完必须连通；格内必须为空
+// 返回 true = 真的拆了一格（调用方据此返还 1 个扩展器）；失败/被取消一律 false
 function c4DoReduce(server, cube, face, player) {
   let C = c4Cwc()
-  if (!C || !cube) return
-  if (!player) { C.deny(player, '拆除需要玩家执行'); return }
-  if (face === 'py') { C.deny(player, '已禁用向上扩展，只能向下（ny）'); return }
+  if (!C || !cube) return false
+  if (!player) { C.deny(player, '拆除需要玩家执行'); return false }
+  if (face === 'py') { C.deny(player, '已禁用向上扩展，只能向下（ny）'); return false }
   if (face !== 'px' && face !== 'nx' && face !== 'pz' && face !== 'nz' && face !== 'ny') {
     C.deny(player, '该面不可拆除')
-    return
+    return false
   }
   let slot = Number(cube.slot)
   let set = c4CellSet(cube)
   let cur = c4CellAt(slot, Math.floor(player.x), Math.floor(player.y), Math.floor(player.z))
-  if (!set[cur]) { C.deny(player, '你不在基地的格子里，拆除已取消'); return }
+  if (!set[cur]) { C.deny(player, '你不在基地的格子里，拆除已取消'); return false }
   let g = String(cur).split(',').map(Number)
   let n = [g[0] + (face === 'px' ? 1 : face === 'nx' ? -1 : 0),
            g[1] + (face === 'py' ? 1 : face === 'ny' ? -1 : 0),
            g[2] + (face === 'pz' ? 1 : face === 'nz' ? -1 : 0)]
   let key = c4CellKey(n[0], n[1], n[2])
-  if (!set[key]) { C.deny(player, '那个方向没有可拆的格子'); return }
-  if (key === '0,0,0') { C.deny(player, '起始 17³ 房间不能拆除'); return }
+  if (!set[key]) { C.deny(player, '那个方向没有可拆的格子'); return false }
+  if (key === '0,0,0') { C.deny(player, '起始 17³ 房间不能拆除'); return false }
   let set2 = Object.assign({}, set)
   delete set2[key]
-  if (!c4CellsConnected(set2, cur)) { C.deny(player, '拆掉这一格会把基地分成两块，已取消'); return }
+  if (!c4CellsConnected(set2, cur)) { C.deny(player, '拆掉这一格会把基地分成两块，已取消'); return false }
   let b = c4CellBox(slot, key)
   let chk = c4CellScan(server, b, face, true)
   if (!chk.ok) {
     let occupyMsg = c4OccupyMsg(chk)
     if (player && C.chat) C.chat(player, occupyMsg)
     else C.deny(player, occupyMsg)
-    return
+    return false
   }
   c4ClearRemovedCell(server, b, set2)
   delete set[key]
   cube.cells = Object.keys(set)
   C.save()
   c4RebuildCells(server, cube)
-  C.deny(player, '拆除完成：-16 格（剩余 ' + cube.cells.length + ' 格）')
+  return true
 }
 
 // /cube expand <slot> <px|nx|pz|nz|py> [force]（root 级；/cube admin expand 保留为别名）
@@ -724,8 +754,8 @@ function c4CmdRebuild(ctx) {
   }
   let n = c4RebuildCells(ctx.source.server, info.cube)
   let hole = 0
-  try { if (C.activateHole) hole = C.activateHole(ctx.source.server, slot, null) } catch (eH) { console.warn('[C4] rebuild 补通道失败: ' + eH) }
-  C.reply(ctx, '格子重建 slot' + slot + '：' + n + ' 格（外边界已重算，通道门=' + hole + '）')
+  try { if (C.syncHole) hole = C.syncHole(ctx.source.server, slot) } catch (eH) { console.warn('[C4] rebuild 补通道失败: ' + eH) }
+  C.reply(ctx, '格子重建 slot' + slot + '：' + n + ' 格（外边界已重算，隧道同步清 3×3=' + hole + '）')
   return 1
 }
 
@@ -760,35 +790,27 @@ function c4ToolUse(event, reduce) {
     let t = C.team(p), key = t ? C.teamKey(t) : null
     let cube = key ? C.cubeOfTeam(key) : null
     if (!cube) { C.deny(p, '你还没有立方体'); return }
-    // 洞口双击：基地天花板洞 = 仰视（pitch < -50）；传送仓地板洞 = 俯视（pitch > 50）
-    // 扩展器 = 激活 3×3 隧道，拆除器 = 拆掉隧道
+    // 洞口双击 —— 隧道开关（只用拆除器）：销毁 / 还原舱地板那扇 17×17 down 面
+    //   基地天花板洞 = 仰视（pitch < -50）；传送仓地板洞 = 任意朝向右键
     let nearHole = (a) => {
       let dd = Math.sqrt(Math.pow(p.x - (a.x + 0.5), 2) + Math.pow(p.z - (a.z + 0.5), 2))
       return dd < 5.5 && p.y >= a.y - 1 && p.y <= a.y + 17
     }
     let pitchNow = Number(p.pitch)
-    // 基地天花板洞：仰视才能激活；传送舱里：任意朝向右键都算（用户要求“随意方向”）
     let atBaseHole = pitchNow < -50 && nearHole(C.baseAnchor(cube.slot))
     let atTeleHole = nearHole(C.teleAnchor(cube.slot))
     if (atBaseHole || atTeleHole) {
-      let now0 = Date.now(), k0 = 'hole:' + (reduce ? 'r:' : 'e:') + C.name(p) + ':' + cube.slot
+      // 扩展器不再管隧道（扩建功能保持不变，隧道开关改由拆除器负责）
+      if (!reduce) { C.deny(p, '隧道开关改用拆除器（扩展器只管扩建）'); return }
+      let now0 = Date.now(), k0 = 'hole:' + C.name(p) + ':' + cube.slot
       let last0 = C4_HOLE_CLICK[k0]
       if (!last0 || now0 - last0 > 5000) {
         C4_HOLE_CLICK[k0] = now0
-        C.deny(p, reduce ? '隧道: 再右键一次确认【拆除】' : '隧道: 再右键一次确认激活')
+        C.deny(p, '隧道: 再右键一次确认【开关隧道】')
         return
       }
       C4_HOLE_CLICK[k0] = 0
-      if (reduce) { C.deactivateHole(server, cube.slot, p); return }
-      // 激活要消耗 1 个扩展器（创造模式不扣）
-      try {
-        if (!p.isCreative()) {
-          let st = p.mainHandItem
-          if (!st || st.count <= 0 || String(st.id) !== 'kubejs:cube_expander') { C.deny(p, '手里没有立方体扩展器'); return }
-          st.shrink(1)
-        }
-      } catch (eC) { console.warn('[C4] 扣扩展器失败: ' + eC) }
-      C.activateHole(server, cube.slot, p)
+      C.toggleHole(server, cube.slot, p)
       return
     }
     // 只能在【基地】内用（传送仓固定 17³，不许改）
@@ -807,6 +829,8 @@ function c4ToolUse(event, reduce) {
       C.deny(p, '+z 面要先把传送仓搬离基地（旧存档请先按一次旧按钮完成迁移）')
       return
     }
+    // 扩建要消耗 1 个扩展器 → 双击确认前就先检查主手（拆除不需要；创造模式不要求也不扣）
+    if (!reduce && !p.isCreative() && !c4HasExpanderInHand(p)) { C.deny(p, '手里没有立方体扩展器（扩建要消耗 1 个）'); return }
     let now = Date.now(), k = (reduce ? 'r:' : 'e:') + C.name(p)
     let last = C4_EXP_CLICK[k]
     if (!last || last.face !== face || now - last.t > 2000) {
@@ -815,8 +839,24 @@ function c4ToolUse(event, reduce) {
       return
     }
     C4_EXP_CLICK[k] = null
-    if (reduce) c4DoReduce(server, cube, face, p)
-    else c4DoExpand(server, cube, face, p)
+    if (reduce) {
+      // 拆除成功才返还 1 个扩展器（失败/被取消一律不还）
+      if (!c4DoReduce(server, cube, face, p)) return
+      c4GiveExpander(p, 1)
+      C.deny(p, '拆除 ' + face + ' 完成（返还 1 个扩展器，剩余 ' + ((cube.cells || []).length) + ' 格）')
+      return
+    }
+    // 扩建成功才扣 1 个扩展器（创造模式不扣）
+    if (!p.isCreative() && !c4HasExpanderInHand(p)) { C.deny(p, '手里没有立方体扩展器（扩建要消耗 1 个）'); return }
+    if (!c4DoExpand(server, cube, face, p)) return
+    let paid = false
+    if (!p.isCreative()) {
+      try {
+        let s2 = p.mainHandItem
+        if (s2 && s2.count > 0) { s2.shrink(1); paid = true }
+      } catch (eC) { console.warn('[C4] 扣扩展器失败: ' + eC) }
+    }
+    C.deny(p, '扩建 ' + face + ' 完成（' + (paid ? '消耗 1 个扩展器' : '创造模式不消耗') + '，当前 ' + ((cube.cells || []).length) + ' 格）')
   } catch (e) { console.warn('[C4] 工具右键: ' + e) }
 }
 
