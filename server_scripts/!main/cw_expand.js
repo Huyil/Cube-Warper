@@ -860,9 +860,15 @@ function c4ToolUse(event, reduce) {
   } catch (e) { console.warn('[C4] 工具右键: ' + e) }
 }
 
-ItemEvents.rightClicked('kubejs:cube_expander', event => c4ToolUse(event, false))
+// 双保险：c4ToolUse 内部已经 try/catch，但事件分发层一旦抛异常，KubeJS 会打
+// "Error in 'ItemEvents.rightClicked'" 并丢掉是谁的锅 —— 这里再包一层，至少能定位到工具。
+ItemEvents.rightClicked('kubejs:cube_expander', event => {
+  try { c4ToolUse(event, false) } catch (e) { console.warn('[C4] expander 右键异常: ' + e) }
+})
 
-ItemEvents.rightClicked('kubejs:cube_reducer', event => c4ToolUse(event, true))
+ItemEvents.rightClicked('kubejs:cube_reducer', event => {
+  try { c4ToolUse(event, true) } catch (e) { console.warn('[C4] reducer 右键异常: ' + e) }
+})
 
 // 供 cw_cubes.js 的命令树 / 其它脚本使用（运行时才读取）
 global.CWE = {
