@@ -995,7 +995,7 @@ function c4MakeReverse(server, slot, dimId, dx, dy, dz, idName) {
   tries.forEach((t, i) => {
     server.scheduleInTicks(t, () => {
       try {
-        let synced = c4SyncDoorTags(server, dimId, dx, dy, dz, ext, slot, idName, true, 120)
+        let synced = c4SyncDoorTags(server, dimId, dx, dy, dz, ext, slot, idName, true, 120, true)
         let missing = 0
         for (let k = 0; k < C4_FACE_DIRS.length; k++) {
           if (!synced.faces[C4_FACE_DIRS[k]]) missing++
@@ -1366,8 +1366,16 @@ function c4ApplyOp(o, seed) {
   return seed
 }
 function c4ReadSeed(server, slot) {
+  // 与原包 processor_calculation 一致：普通算子按 +1 → 0 → -1 顺序算，
+  // 特殊算子（eye = 999 / infinite = -999）在最后统一覆盖，不受所在槽位影响。
   let seed = 0
-  for (let i = 1; i >= -1; i--) seed = c4ApplyOp(c4OpAt(server, slot, i), seed)
+  let special = null
+  for (let i = 1; i >= -1; i--) {
+    let o = c4OpAt(server, slot, i)
+    if (o && (o.key === 'eye' || o.key === 'infinite')) { special = o; continue }
+    seed = c4ApplyOp(o, seed)
+  }
+  if (special) seed = c4ApplyOp(special, seed)
   return seed
 }
 
@@ -1788,26 +1796,38 @@ function c4WarpBody(server, job) {
   // 原包 runtime.mcfunction:21-23：+1 → 0 → -1，每格 1 秒；种子按消耗顺序逐格累加
   // （原包就是"读一格 → 结算 → 消耗"，倒计时期间被放进去的算子也会被算上）
   let seedAcc = 0
+  job._ops = {}
   server.scheduleInTicks(20, () => {
     if (C4_BUSY !== job) return
     try {
-      seedAcc = c4ApplyOp(c4OpAt(server, slot, 1), seedAcc)
+      job._ops[1] = c4OpAt(server, slot, 1)
       c4ConsumeSlot(server, slot, 1)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
   })
   server.scheduleInTicks(40, () => {
     if (C4_BUSY !== job) return
     try {
-      seedAcc = c4ApplyOp(c4OpAt(server, slot, 0), seedAcc)
+      job._ops[0] = c4OpAt(server, slot, 0)
       c4ConsumeSlot(server, slot, 0)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
   })
   server.scheduleInTicks(60, () => {
     if (C4_BUSY !== job) return
     try {
-      seedAcc = c4ApplyOp(c4OpAt(server, slot, -1), seedAcc)
+      job._ops[-1] = c4OpAt(server, slot, -1)
       c4ConsumeSlot(server, slot, -1)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+    // 与原包一致：普通算子按 1→0→-1 顺序算，eye/infinite 最后覆盖
+    try {
+      let acc = 0, sp = null
+      ;[1, 0, -1].forEach(i => {
+        let o = job._ops[i]
+        if (o && (o.key === 'eye' || o.key === 'infinite')) sp = o
+        else acc = c4ApplyOp(o, acc)
+      })
+      if (sp) acc = c4ApplyOp(sp, acc)
+      seedAcc = acc
+    } catch (eAcc) { seedAcc = 0 }
     // 倒计时期间插槽可能被改动：以 t=60 的最终 seed 为准，重选目的地（原包 t=85 才选维度）
     if (seedAcc !== d.seed) {
       console.warn('[C4] 槽位 ' + slot + ' 倒计时期间插槽被改动：seed ' + d.seed + ' → ' + seedAcc + '，按新 seed 重选目的地')
@@ -1920,6 +1940,29 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
         console.info('[C4] 动画版 a 目的地房间先建好 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
       } else {
         console.info('[C4] 动画版 a 复用固定房间 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+      }
+      // ★ edge 维度：固定落点；遗迹两处（幂等：中心格不是空气就跳过，复用旧落点也会补建）
+      //   ① 贴面遗迹：-z 面紧贴房间 +z 面（房间 Z1=dz+8，遗迹 Z0=dz+9）
+      //   ② +60 格远遗迹：原包 ticket 的“远处失落立方体”
+      if (String(d.dim) === 'hexahedron:the_edge_of_reality') {
+        try {
+          let ex0 = Math.floor(dx) - 8, ey0 = Math.floor(dy) - 8
+          let ezFlush = Math.floor(dz) + 9, ezFar = Math.floor(dz) + 60
+          server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (ex0 - 16) + ' ' + (ezFlush - 16)
+            + ' ' + (ex0 + 32) + ' ' + (ezFar + 32))
+          let lvE = c4Level(server, d.dim)
+          let hasRuin = (z0) => {
+            try { return lvE ? String(lvE.getBlock(ex0, ey0, z0).id) !== 'minecraft:air' : false } catch (e) { return false }
+          }
+          if (!hasRuin(ezFlush)) {
+            let nF = Number(server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + ex0 + ' ' + ey0 + ' ' + ezFlush))
+            console.info('[C4] edge 贴面遗迹 @' + ex0 + ',' + ey0 + ',' + ezFlush + '（' + nF + ' 方块，紧贴房间 +z 面）')
+          } else console.info('[C4] edge 贴面遗迹已存在 @' + ex0 + ',' + ey0 + ',' + ezFlush)
+          if (!hasRuin(ezFar)) {
+            let nR = Number(server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + ex0 + ' ' + ey0 + ' ' + ezFar))
+            console.info('[C4] edge +60 遗迹 @' + ex0 + ',' + ey0 + ',' + ezFar + '（' + nR + ' 方块）')
+          } else console.info('[C4] edge +60 遗迹已存在 @' + ex0 + ',' + ey0 + ',' + ezFar)
+        } catch (eEdge) { console.warn('[C4] edge 遗迹处理失败: ' + eEdge) }
       }
 
       // b) 分步指门：从「上一处落点」lerp 到「新落点」，每段间隔 per tick
@@ -2696,6 +2739,17 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
       c4CmdDoors(ctx, IAT.getInteger(ctx, 'slot')); return 1
     })))
 
+  // /cube admin cleardest <slot> <dim|all>：删掉该槽位某个维度的固定落点记录
+  // 下次跃迁会重新随机分配（用于布局改版后强制重建房间/遗迹）
+  root.then(cmdRoot.literal('cleardest').requires(src => src.hasPermission(2))
+    .then(cmdRoot.argument('slot', IAT.integer(0))
+      .then(cmdRoot.argument('dim', c4Cls('com.mojang.brigadier.arguments.StringArgumentType').string())
+        .executes(ctx => {
+          let SAT2 = c4Cls('com.mojang.brigadier.arguments.StringArgumentType')
+          c4CmdClearDest(ctx, IAT.getInteger(ctx, 'slot'), String(SAT2.getString(ctx, 'dim')))
+          return 1
+        }))))
+
   root.then(cmdRoot.literal('build').requires(src => src.hasPermission(2))
     .then(cmdRoot.argument('slot', IAT.integer(0))
       .executes(ctx => { c4CmdBuild(ctx, IAT.getInteger(ctx, 'slot'), false); return 1 })
@@ -3279,6 +3333,48 @@ function c4CmdTele(ctx, slot, floorY) {
   c4Reply(ctx, '传送器 slot' + slot + ' → floor=' + (by - 1) + ' 按钮=' + bx + ',' + by + ',' + bz)
 }
 
+// dim 参数解析：支持 ①完整 id（hexahedron:xxx）②seed 序号（如 999）③维度名末段（如 the_edge_of_reality）④all/*
+function c4ResolveDimArg(arg) {
+  let a = String(arg || '').trim()
+  if (!a) return null
+  if (a === 'all' || a === '*') return a
+  if (a.indexOf(':') >= 0) return a
+  if (/^-?\d+$/.test(a)) {
+    let seed = Number(a)
+    if (C4_SEED_DIMS[seed]) return String(C4_SEED_DIMS[seed])
+    return null
+  }
+  for (let k in C4_SEED_DIMS) {
+    let id = String(C4_SEED_DIMS[k])
+    if (id.split(':')[1] === a) return id
+  }
+  return null
+}
+// 清除某槽位某个维度的固定落点记录（dim = all 清全部；也接受 seed 序号/维度名末段）
+function c4CmdClearDest(ctx, slot, dimArg) {
+  try {
+    let dim = c4ResolveDimArg(dimArg)
+    if (dim === null) { c4Reply(ctx, '无法识别维度：' + dimArg + '（可用 id / seed 序号 / 维度名末段 / all）'); return }
+    let h = c4TeamOfSlot(slot)
+    if (!h || !h.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+    let c = h.cube
+    if (!c.dests) c.dests = {}
+    if (dim === 'all' || dim === '*') {
+      let n = 0
+      for (let k in c.dests) { delete c.dests[k]; n++ }
+      c.curDestDim = null
+      c4Save()
+      c4Reply(ctx, '已清空槽位 ' + slot + ' 的全部目的地（' + n + ' 个），下次跃迁重新分配')
+      return
+    }
+    let had = !!c.dests[dim]
+    delete c.dests[dim]
+    if (String(c.curDestDim || '') === dim) c.curDestDim = null
+    c4Save()
+    c4Reply(ctx, (had ? '已删除' : '本来没有') + ' 槽位 ' + slot + ' 的目的地 ' + dim + '；下次跃迁会重新分配')
+  } catch (e) { c4Reply(ctx, 'cleardest 失败: ' + e) }
+}
+
 function c4CmdDoors(ctx, slot) {
   let server = ctx.source.server
   let h = c4TeamOfSlot(slot)
@@ -3303,6 +3399,7 @@ function c4CmdDoors(ctx, slot) {
   } catch (e1) {}
   let made = 0
   try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e2) { console.warn('[C4] 造门失败: ' + e2) }
+
   let seed = 0
   try { seed = c4ReadSeed(server, slot) } catch (e3) { seed = 0 }
   let dest = c4DestOf(h.cube, C4_SEED_DIMS[seed] || C4_SEED_DIMS[0])
@@ -3852,7 +3949,7 @@ function c4TagDoor(e, slot, cubeId, dir, isRev) {
   } catch (err) { console.warn('[C4] 门打 tag 失败: ' + err) }
 }
 // 同一 (队伍, 面) 只允许一扇：保留离期望门面最近的（位置相同则保留先枚举到的），其余 kill
-function c4DedupeDoors(server, doors, T) {
+function c4DedupeDoors(server, doors, T, allowDedupe) {
   let byFace = {}
   doors.forEach(e => {
     let d = c4FaceOf(e)
@@ -3919,7 +4016,7 @@ function c4SyncDoorTags(server, dimId, cx, cy, cz, ext, slot, cubeId, isRev, rad
       doors.push(e)
     } catch (err) {}
   })
-  let killed = c4DedupeDoors(server, doors, T)
+  let killed = c4DedupeDoors(server, doors, T, allowDedupe)
   let faces = {}
   for (let i = 0; i < C4_FACE_DIRS.length; i++) faces[C4_FACE_DIRS[i]] = 0
   doors.forEach(e => {
