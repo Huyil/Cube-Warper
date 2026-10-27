@@ -4563,6 +4563,32 @@ function c4CmdBind(ctx, slot, x, y, z) {
 //   管道顶（tel.y-1=179）中央 3×3 玻璃盖：封住管道、舱内洞口仍敞开（B 门在它上面一层，不被埋住）
 //   管道里两扇 3×3：cw_pipe_up（顶端，法向 -Y，飞上来的先撞它）/ cw_pipe_down（底端，法向 +Y，掉下来的先撞它）
 // cb_make_portal 直接生成、不建反向门 = 单向；重复激活先杀旧门再建（幂等）。
+// 基地内垂直梯子：从基地地板沿 -x 侧爬到管道里的上行 3×3 门（116.9），不用飞。
+// 结构：x=bx-2 一根 frame 支柱（98..112，113 是天花板本身），x=bx-1 贴梯子（98..116，
+//       114..116 的靠背正好是 5×5 管道的框梁环）。只 replace air，不覆盖玩家方块。
+function c4BuildHoleLadder(server, slot) {
+  try {
+    let bas = c4BaseAnchor(slot)
+    let tel = c4TeleAnchor(slot)
+    let bx = Math.floor(bas.x + 0.5), bz = Math.floor(bas.z + 0.5)
+    let ceil = bas.y + 16
+    let y0 = bas.y + 1
+    let yTop = tel.y - 2          // tel.y=118 → 116（再往上一格就是 116.9 的门面）
+    if (yTop < y0) return 0
+    server.runCommandSilent('execute in minecraft:overworld run fill ' + (bx - 2) + ' ' + y0 + ' ' + bz + ' '
+      + (bx - 2) + ' ' + (ceil - 1) + ' ' + bz + ' kubejs:warping_frame replace minecraft:air')
+    let n = 0
+    for (let y = y0; y <= yTop; y++) {
+      try {
+        server.runCommandSilent('execute in minecraft:overworld run fill ' + (bx - 1) + ' ' + y + ' ' + bz + ' '
+          + (bx - 1) + ' ' + y + ' ' + bz + ' minecraft:ladder[facing=east] replace minecraft:air')
+        n++
+      } catch (e1) {}
+    }
+    console.info('[C4] 基地梯子 slot=' + slot + ' @' + (bx - 1) + ',' + y0 + '..' + yTop + ',' + bz + '（靠背 ' + (bx - 2) + '）')
+    return n
+  } catch (e) { console.warn('[C4] 基地梯子失败: ' + e); return 0 }
+}
 function c4ActivateHole(server, slot, player) {
   try {
     let info = c4TeamOfSlot(slot)
@@ -4674,6 +4700,9 @@ function c4ActivateHole(server, slot, player) {
           + ' / 底@' + botY + '(rot-90,-Y)→顶@' + Ptop.y + (okP2 ? ' OK' : ' 失败'))
       }
     } catch (ePipe2) { console.warn('[C4] 管道 3×3 门失败: ' + ePipe2) }
+
+    // ③.8 基地内的垂直梯子：从基地地板爬到管道里的上行门（不用飞）
+    try { c4BuildHoleLadder(server, slot) } catch (eLd) { console.warn('[C4] 梯子失败: ' + eLd) }
 
     // ④ 隧道只由上面两扇 3×3 组成（不再建历史 A/B 门——B 就是第 3 扇的来源）
     console.info('[C4] 隧道 slot=' + slot + ' 就绪：3×3×2 扇互指'
