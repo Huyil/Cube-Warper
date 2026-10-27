@@ -1033,11 +1033,12 @@ function c4BuildBaseBox(server, slot) {
     try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) }
     catch (e) { console.warn('[C4] 基地盒: ' + e + ' :: ' + cmd) }
   }
-  // ① 清 17³（按 y 分片，单条 < 32768）
-  for (let yy = Y0; yy <= Y1; yy += 8) {
-    run('fill ' + X0 + ' ' + yy + ' ' + Z0 + ' ' + X1 + ' ' + Math.min(yy + 7, Y1) + ' ' + Z1 + ' minecraft:air')
+  // ① 清 17³（按 y 分片，单条 < 32768）+ 管道那 4 层（114..117，模板自带）
+  for (let yy = Y0; yy <= Y1 + 4; yy += 8) {
+    let y2 = Math.min(yy + 7, Y1 + 4)
+    run('fill ' + X0 + ' ' + yy + ' ' + Z0 + ' ' + X1 + ' ' + y2 + ' ' + Z1 + ' minecraft:air')
   }
-  // ★ 预制模板优先：一条 place template 建整个封闭基地盒（1530 方块：地板/四壁/天花板+3×3洞/灯/7排气孔）。
+  // ★ 预制模板优先：一条 place template 建整个封闭基地盒 + 顶部 5×5 管道（1630 方块；管道中间 3×3 先封住，由扩建器开传送门）。
   //   模板本身不含 barrier/structure_void/hexahedron_filling；放置前的 ① 已把 17³ 清成 air，
   //   模板失败则回退逐条 fill。
   let usedTmpl = false
@@ -1046,7 +1047,7 @@ function c4BuildBaseBox(server, slot) {
       + X0 + ' ' + Y0 + ' ' + Z0))
     usedTmpl = tr > 0
   } catch (eTm) { usedTmpl = false }
-  if (usedTmpl) console.info('[C4] 基地模板已放置 slot=' + slot + ' @' + X0 + ',' + Y0 + ',' + Z0 + '（1530 方块 / 1 条命令）')
+  if (usedTmpl) console.info('[C4] 基地模板已放置 slot=' + slot + ' @' + X0 + ',' + Y0 + ',' + Z0 + '（1630 方块 / 1 条命令）')
   else console.warn('[C4] 模板 hexahedron:cw_base17 不可用 → 回退逐条 fill')
   if (!usedTmpl) {
   // ② 地板整面平台（不再留 3×3 地板洞）
