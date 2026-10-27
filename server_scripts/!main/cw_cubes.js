@@ -2348,7 +2348,8 @@ BlockEvents.broken(event => {
   try {
     let id = String(event.block.id)
     if (C4_PROTECTED_BLOCKS.indexOf(id) < 0) return
-    event.cancel()
+    // 注意：KubeJS 的 event.cancel() 会抛 EventExit 中断本 handler ——
+    // 所以必须先排好“1t 后补回”的兜底，再 cancel；cancel 自己再单独 try 掉，避免日志刷 JavaException。
     let server = event.server, bx = event.block.x, by = event.block.y, bz = event.block.z
     let dim = 'minecraft:overworld'
     try { dim = String(event.player.level.dimension) } catch (e0) {}
@@ -2360,6 +2361,7 @@ BlockEvents.broken(event => {
       } catch (e1) {}
     })
     try { event.player.tell(Text.of('⟢ 这是立方体的机器零件，拆不掉（要用拆除器对着洞口双击来拆 3×3 隧道）')) } catch (e2) {}
+    try { event.cancel() } catch (eCancel) {}
   } catch (e) { console.warn('[C4] 保护方块检查失败: ' + e) }
 })
 

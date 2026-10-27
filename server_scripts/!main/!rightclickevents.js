@@ -55,6 +55,7 @@ ItemEvents.rightClicked('kubejs:party_popper', event => {
 })
 
 BlockEvents.rightClicked(event => {
+    if (!event.item || !event.item.id) return
     if (event.item.id != 'alexscaves:desolate_dagger') return
     if (!event.player.isFake()) return
     if (event.block.id != 'malum:block_of_living_flesh') return
