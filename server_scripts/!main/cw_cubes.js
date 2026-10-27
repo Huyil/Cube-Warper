@@ -4575,13 +4575,14 @@ function c4BuildHoleLadder(server, slot) {
     let y0 = bas.y + 1
     let yTop = tel.y - 2          // tel.y=118 → 116（再往上一格就是 116.9 的门面）
     if (yTop < y0) return 0
+    // 靠背用可拆的石砖（destroy：覆盖掉的方块会掉落，玩家可回收）
     server.runCommandSilent('execute in minecraft:overworld run fill ' + (bx - 2) + ' ' + y0 + ' ' + bz + ' '
-      + (bx - 2) + ' ' + (ceil - 1) + ' ' + bz + ' kubejs:warping_frame replace minecraft:air')
+      + (bx - 2) + ' ' + (ceil - 1) + ' ' + bz + ' minecraft:stone_bricks destroy')
     let n = 0
     for (let y = y0; y <= yTop; y++) {
       try {
-        server.runCommandSilent('execute in minecraft:overworld run fill ' + (bx - 1) + ' ' + y + ' ' + bz + ' '
-          + (bx - 1) + ' ' + y + ' ' + bz + ' minecraft:ladder[facing=east] replace minecraft:air')
+        server.runCommandSilent('execute in minecraft:overworld run setblock ' + (bx - 1) + ' ' + y + ' ' + bz
+          + ' minecraft:ladder[facing=east] destroy')
         n++
       } catch (e1) {}
     }
@@ -4632,11 +4633,11 @@ function c4ActivateHole(server, slot, player) {
     // ③ 打通两个洞口（清掉历史遗留玻璃/水/封块；再清洞的另一侧一格，防止旧结构顶住门面）
     try {
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (hx - 1) + ' ' + baseCeil + ' ' + (hz - 1) + ' '
-        + (hx + 1) + ' ' + baseCeil + ' ' + (hz + 1) + ' minecraft:air destroy')
+        + (hx + 1) + ' ' + baseCeil + ' ' + (hz + 1) + ' minecraft:air')
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (hx - 1) + ' ' + (baseCeil - 1) + ' ' + (hz - 1) + ' '
         + (hx + 1) + ' ' + (baseCeil - 1) + ' ' + (hz + 1) + ' minecraft:air')
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (tx0 - 1) + ' ' + teleFloor + ' ' + (tz0 - 1) + ' '
-        + (tx0 + 1) + ' ' + teleFloor + ' ' + (tz0 + 1) + ' minecraft:air destroy')
+        + (tx0 + 1) + ' ' + teleFloor + ' ' + (tz0 + 1) + ' minecraft:air')
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (tx0 - 1) + ' ' + (teleFloor - 1) + ' ' + (tz0 - 1) + ' '
         + (tx0 + 1) + ' ' + (teleFloor - 1) + ' ' + (tz0 + 1) + ' minecraft:air')
       // ③-b 天花板洞正下方那格重新补隐藏光源（上面的 3×3 清空会顺带清掉重建时放的灯）
