@@ -582,21 +582,10 @@ function c4SaveState() {
 // ---------------------------------------------------------------------------- 区块加载（API，替代 forceload）
 let C4_CL_OK = null      // null=未知 true=可用 false=不可用
 function c4ChunkLoader(server, slot) {
-  if (C4_CL_OK === false) return false
-  try {
-    let lvl = c4OwLevel(server)
-    if (lvl === null) throw new Error('取不到主世界 ServerLevel')
-    let dc = new (c4Cls('qouteall.imm_ptl.core.chunk_loading.DimensionalChunkPos'))(
-      c4DimKey('minecraft:overworld'), Math.floor(c4CubeX(slot) / 16), Math.floor(C4_Z / 16))
-    let loader = new (c4Cls('qouteall.imm_ptl.core.chunk_loading.ChunkLoader'))(dc, 1)
-    c4PortalAPI().addGlobalChunkLoader(server, loader)
-    C4_CL_OK = true
-    return true
-  } catch (e) {
-    C4_CL_OK = false
-    console.warn('[C4] ChunkLoader 不可用，改用 forceload（只提示一次）: ' + e)
-    return false
-  }
+  // IP 3.0.7 的 PortalAPI 没有 addGlobalChunkLoader（只有 addChunkLoaderForPlayer），
+  // 我们的 cube 区域统一用 forceload（c4ForceloadBox），这里不再尝试 IP 的全局 ChunkLoader。
+  // 保留函数名以兼容旧调用点；返回 false 表示"用 forceload"。
+  return false
 }
 
 function c4ForceloadBox(slot, add) {
