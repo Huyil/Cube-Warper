@@ -32,6 +32,6 @@
    ],
   "parent": "minecraft:block/cube_all",
   "textures": {
-    "all": "kubejs:block/warping_frame/warping_frame_3"
+    "all": "kubejs:block/warping_frame_slab_top_3"
   }
 }
