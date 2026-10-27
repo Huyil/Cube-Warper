@@ -858,7 +858,8 @@ function c4HomeSeat(slot) {
   let b = h && h.cube && h.cube.btn
   if (!b || b.x === undefined || b.y === undefined || b.z === undefined) return c4BaseSeat(slot, 0, 1)
   let bp = c4BtnPos(slot)
-  return { x: bp.x + 0.5, y: bp.y, z: bp.z - 3.0 + 0.5 }
+  // 落点 = 按钮正前方 3 格、按钮上方 1 格（按钮 119 → 4008.5,120,4.0）
+  return { x: bp.x + 0.5, y: bp.y + 1.0, z: bp.z - 3.0 }
 }
 function c4BaseSeat(slot, i, n) {
   let a = c4BaseAnchor(slot)
