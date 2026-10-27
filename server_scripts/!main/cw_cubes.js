@@ -4847,6 +4847,13 @@ function c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext) {
   let tag = c4FaceTag('-y')
   let T = c4FaceTargets(cx, cy, cz, ext)
   let q = (T['-y'] && T['-y'].p) ? T['-y'].p : [cx, cy - 8.5, cz]
+  // ① 命令 kill 是唯一可靠的方式（Immersive Portals 门实体不吃 discard()/kill()）
+  try {
+    let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + cx + ' ' + cy + ' ' + cz
+      + ' run kill @e[type=immersive_portals:portal,tag=' + tag + ',distance=..96,tag=!cw_lobby]'))
+    if (!isNaN(k)) n += k
+  } catch (e0) {}
+  // ② 实体 API 再兜一遍（能杀到就是白赚；杀不到也不影响）
   try {
     c4PortalsInDim(server, 'minecraft:overworld', cx, cy, cz, 120).forEach(e => {
       try {
@@ -4854,7 +4861,7 @@ function c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext) {
         if (!c4HasTag(e, tag)) return
         if (!c4DoorOwnedBy(e, slot, cubeId)) return
         if (c4Dist2(e.x, e.y, e.z, q[0], q[1], q[2]) > 16 * 16) return   // 只清舱底这一扇，别扫到基地的门
-        try { e.discard(); n++ } catch (e1) { try { e.kill(); n++ } catch (e2) {} }
+        try { e.discard() } catch (e1) { try { e.kill() } catch (e2) {} }
       } catch (err) {}
     })
   } catch (e3) { console.warn('[C4] 清舱底 down 面失败: ' + e3) }
@@ -5037,16 +5044,33 @@ function c4ToggleHole(server, slot, player) {
       console.info('[C4] 隧道打开 slot=' + slot + '：舱底 down 面本就不存在（旧存档/已打开过）→ 只清 3×3')
     }
     let n3 = c4KillPipeLinks(server, slot)           // ① 旧 3×3 门（四代 tag）先清干净
+    // ② 销毁本台 down 面 —— 必须走【服务端 kill 命令】
+    //    Immersive Portals 的门实体不吃 KubeJS 的 entity.discard()/kill()（实测无效），
+    //    只有 runCommandSilent 的 /kill 真的能移除它。而且 forceload 是异步的：
+    //    立刻发一次，20t 后再补一次（幂等），避免"命令发了但区块还没加载"。
     let killed = 0
-    if (door) {                                      // ② 再销毁本台 down 面
-      try { door.discard(); killed++ } catch (eD) { try { door.kill(); killed++ } catch (eD2) {} }
+    let killDownByCmd = (why) => {
+      try {
+        let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + cx + ' ' + cy + ' ' + cz
+          + ' run kill @e[type=immersive_portals:portal,tag=' + c4FaceTag('-y') + ',distance=..96,tag=!cw_lobby]'))
+        if (!isNaN(k)) killed += k
+        console.info('[C4] 隧道打开 slot=' + slot + '：命令清 down 面 = ' + (isNaN(k) ? '?' : k) + ' 扇（' + why + '）')
+      } catch (eK) { console.warn('[C4] 命令清 down 面失败: ' + eK) }
     }
-    killed += c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext0)   // 兜底：同面重复的门一起清
+    killDownByCmd('立即')
+    if (door) {                                      // 能拿到实体就顺手 discard（能省一次命令，失败也无所谓）
+      try { door.discard() } catch (eD) { try { door.kill() } catch (eD2) {} }
+    }
+    let killedEnt = c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext0)   // 兜底：同面重复的门一起清
     cube.holeOpen = true                             // ③ 置位落盘
     c4Save()
+    // forceload 生效后再补一次，防止"第一次没加载到"
+    server.scheduleInTicks(20, () => {
+      try { if (c4HoleOpen(slot)) killDownByCmd('20t') } catch (eT) {}
+    })
     let carve = 0
     try { carve = c4CarveShaft(server, slot) } catch (eS2) { console.warn('[C4] 隧道结构失败: ' + eS2) }
-    console.info('[C4] 隧道已打开 slot=' + slot + '：down 面销毁 ' + killed + ' 扇，清 3×3 ' + n3 + ' 扇，结构=' + carve
+    console.info('[C4] 隧道已打开 slot=' + slot + '：down 面销毁 ' + killed + ' 扇（实体兜底 ' + killedEnt + ' 扇），清 3×3 ' + n3 + ' 扇，结构=' + carve
       + '，目标 ' + (d ? (d.dim + ' @' + d.x + ',' + d.y + ',' + d.z) : (cube.holeSaved ? '沿用旧记录' : '无记录')))
     if (d) {
       try { c4BarTeam(server, slot, '隧道: 已打开（舱地板 → 基地）') } catch (eB3) {}
