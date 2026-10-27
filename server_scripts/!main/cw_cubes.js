@@ -1033,12 +1033,12 @@ function c4BuildBaseBox(server, slot) {
     try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) }
     catch (e) { console.warn('[C4] 基地盒: ' + e + ' :: ' + cmd) }
   }
-  // ① 清 17³（按 y 分片，单条 < 32768）+ 管道那 4 层（114..117，模板自带）
-  for (let yy = Y0; yy <= Y1 + 4; yy += 8) {
-    let y2 = Math.min(yy + 7, Y1 + 4)
+  // ① 清 17³（按 y 分片，单条 < 32768）；管道另由独立模板铺（见下）
+  for (let yy = Y0; yy <= Y1; yy += 8) {
+    let y2 = Math.min(yy + 7, Y1)
     run('fill ' + X0 + ' ' + yy + ' ' + Z0 + ' ' + X1 + ' ' + y2 + ' ' + Z1 + ' minecraft:air')
   }
-  // ★ 预制模板优先：一条 place template 建整个封闭基地盒 + 顶部 5×5 管道（1630 方块；管道中间 3×3 先封住，由扩建器开传送门）。
+  // ★ 预制模板优先：一条 place template 建整个封闭基地盒（1530 方块）。
   //   模板本身不含 barrier/structure_void/hexahedron_filling；放置前的 ① 已把 17³ 清成 air，
   //   模板失败则回退逐条 fill。
   let usedTmpl = false
@@ -1047,7 +1047,7 @@ function c4BuildBaseBox(server, slot) {
       + X0 + ' ' + Y0 + ' ' + Z0))
     usedTmpl = tr > 0
   } catch (eTm) { usedTmpl = false }
-  if (usedTmpl) console.info('[C4] 基地模板已放置 slot=' + slot + ' @' + X0 + ',' + Y0 + ',' + Z0 + '（1630 方块 / 1 条命令）')
+  if (usedTmpl) console.info('[C4] 基地模板已放置 slot=' + slot + ' @' + X0 + ',' + Y0 + ',' + Z0 + '（1530 方块 / 1 条命令）')
   else console.warn('[C4] 模板 hexahedron:cw_base17 不可用 → 回退逐条 fill')
   if (!usedTmpl) {
   // ② 地板整面平台（不再留 3×3 地板洞）
@@ -1065,6 +1065,15 @@ function c4BuildBaseBox(server, slot) {
   ;['minecraft:barrier', 'minecraft:structure_void', 'kubejs:hexahedron_filling'].forEach(t => {
     run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y1 + ' ' + Z1 + ' minecraft:air replace ' + t)
   })
+  // ★ 管道模板（独立 5×20×5）：5×5 框梁 y 114..117、梯子 y 98..116、可拆石砖靠背 y 98..112；
+  //   传送仓地板下一格（117）的 3×3 预封，扩建器建 3×3 门时会把它填 air 拆掉。
+  try {
+    let trP = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_pipe_ladder '
+      + (X0 + 6) + ' ' + (Y0 + 1) + ' ' + (Z0 + 6)))
+    if (trP > 0) console.info('[C4] 管道模板已放置 slot=' + slot + ' @' + (X0 + 6) + ',' + (Y0 + 1) + ',' + (Z0 + 6) + '（107 方块 / 1 条命令）')
+    else console.warn('[C4] 模板 hexahedron:cw_pipe_ladder 不可用 → 由扩建器建管道')
+  } catch (eP) { console.warn('[C4] 管道模板失败: ' + eP) }
+
   // ⑤ 隐藏光源：房间中央（和原 17x17 的 ~ ~8 ~ 同高）+ 天花板下 1 格按每 5 格补一圈
   //    （初始节点也不会再出现"一片黑"；light 无碰撞、不可见，只补空气）
   run('setblock ' + a.x + ' ' + (Y0 + 8) + ' ' + a.z + ' minecraft:light[level=15]')
@@ -4609,12 +4618,12 @@ function c4BuildHoleLadder(server, slot) {
     if (yTop < y0) return 0
     // 靠背用可拆的石砖（destroy：覆盖掉的方块会掉落，玩家可回收）
     server.runCommandSilent('execute in minecraft:overworld run fill ' + (bx - 2) + ' ' + y0 + ' ' + bz + ' '
-      + (bx - 2) + ' ' + (ceil - 1) + ' ' + bz + ' minecraft:stone_bricks destroy')
+      + (bx - 2) + ' ' + (ceil - 1) + ' ' + bz + ' minecraft:stone_bricks replace minecraft:air')
     let n = 0
     for (let y = y0; y <= yTop; y++) {
       try {
         server.runCommandSilent('execute in minecraft:overworld run setblock ' + (bx - 1) + ' ' + y + ' ' + bz
-          + ' minecraft:ladder[facing=east] destroy')
+          + ' minecraft:ladder[facing=east] replace minecraft:air')
         n++
       } catch (e1) {}
     }
