@@ -1119,6 +1119,18 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   // 1) 基地本体：slot>=1 用新封闭盒（六面 warping_frame + 整面地板 platform + 天花板中央 3×3 洞）；
   //    slot 0（出生大厅）继续用原包 17x17（那条数据包函数只保留给大厅；起始笼子另见 CAGE 分支）
   if (Number(slot) >= 1) {
+    // ★ 新建立方体顺序：传送仓(21³ 模板) → 基地(17³) → 管道(5×20×5，强制替换)
+    //   舱的 2 格 air 留边会伸到 116/117，所以先建舱，后面基地/管道再盖上去。
+    try {
+      let aT = c4TeleAnchor(slot)
+      let tx0 = Math.floor(aT.x) - 10, ty0 = Math.floor(aT.y) - 2, tz0 = Math.floor(aT.z) - 10
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + tx0 + ' ' + ty0 + ' ' + tz0
+        + ' ' + (tx0 + 20) + ' ' + (ty0 + 20) + ' ' + (tz0 + 20) + ' minecraft:air')
+      let trC = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter21 '
+        + tx0 + ' ' + ty0 + ' ' + tz0))
+      if (trC > 0) console.info('[C4] 传送仓模板先建 slot=' + slot + ' @' + tx0 + ',' + ty0 + ',' + tz0 + '（21³）')
+      else console.warn('[C4] 传送仓模板不可用 slot=' + slot)
+    } catch (eCab) { console.warn('[C4] 先建传送仓失败: ' + eCab) }
     try { c4BuildBaseBox(server, slot, true) } catch (eBB) { console.warn('[C4] 基地封闭盒失败: ' + eBB) }
     // ★ 基地尺寸以 cells 为准（ext 转化后已废弃）：开荒/重置后按 cells 重建整个并集外壳，
     //   否则只会有原点 17³ 那一间，扩建过的基地看起来就“变小”了。
