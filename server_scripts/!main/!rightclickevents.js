@@ -1,6 +1,4 @@
 BlockEvents.rightClicked('kubejs:launch_button', event => {
-	event.server.runCommandSilent(`execute in ${event.entity.level.dimension} positioned ${event.block.x} ${event.block.y} ${event.block.z} run function hexahedron:first_init/world_start`)
-	event.server.runCommandSilent(`execute in ${event.entity.level.dimension} positioned ${event.block.x} ${event.block.y} ${event.block.z} run tag @e[tag=core] add pre_runtime`)
 })
 
 BlockEvents.rightClicked('kubejs:ancient_core', event => {

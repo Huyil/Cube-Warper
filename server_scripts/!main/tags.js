@@ -17,12 +17,12 @@ ServerEvents.tags('block', event => {
   event.add('hexahedron_frame', 'kubejs:warping_vent')
   event.add('hexahedron_frame', 'kubejs:warping_vent_rusted_half')
   event.add('hexahedron_frame', 'kubejs:warping_vent_rusted')
-  event.add('hexahedron_frame', 'kubejs:stacked_warping_frame_slab')
+  event.add('hexahedron_frame', 'kubejs:stacked_warping_frame')
   event.add('hexahedron_frame', 'kubejs:warping_interface')
   event.add('hexahedron_frame', 'kubejs:warping_controls')
   event.add('hexahedron_frame', 'kubejs:warping_disc_drive')
 
-  event.add('minecraft:invalid_spawn_inside', 'kubejs:hexahedron_filling')
+  event.add('minecraft:invalid_spawn_inside', 'minecraft:structure_void')
 
   event.add('kubejs:crimson_eye', 'kubejs:eye_closed')
   event.add('kubejs:crimson_eye', 'kubejs:eye_stage_1')

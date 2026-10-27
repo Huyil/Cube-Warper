@@ -1,7 +1,7 @@
 StartupEvents.registry('block', event => {
 
 let rotatable = (id, name, configure) => {
-    let block = event.create(id)
+    let block = event.create(id).waterlogged()
         .displayName(name)
         .property(BlockProperties.FACING)
         .placementState(c => {
@@ -22,7 +22,7 @@ let rotatable = (id, name, configure) => {
 }
 
 let rotatable_side = (id, name, configure) => {
-    let block = event.create(id)
+    let block = event.create(id).waterlogged()
         .displayName(name)
         .property(BlockProperties.FACING)
         .placementState(c => {
@@ -248,7 +248,7 @@ let rotatable_side = (id, name, configure) => {
 
 
 let eye = (id) => {
-	event.create(id).displayName(Text.translatable('cw.pack.block.crimson_eye'))
+	event.create(id).waterlogged().displayName(Text.translatable('cw.pack.block.crimson_eye'))
 	
 		.fullBlock(true)
 		.material("stone")
@@ -278,7 +278,7 @@ let eye = (id) => {
 	eye("eye_stage_3")
 	eye("eye_stage_4")
 
-	event.create('crimson_eye').displayName(Text.translatable('cw.pack.block.crimson_eye_red'))
+	event.create('crimson_eye').waterlogged().displayName(Text.translatable('cw.pack.block.crimson_eye_red'))
 		.fullBlock(true)
 		.material("shroomlight")
 		.soundType("shroomlight")
@@ -296,13 +296,13 @@ let eye = (id) => {
 		.noDrops()
 		.noValidSpawns(true)
 
-	event.create('warping_frame').displayName(Text.translatable('cw.pack.block.warping_frame'))
+	event.create('warping_frame').waterlogged().displayName(Text.translatable('cw.pack.block.warping_frame'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('stacked_warping_frame').displayName(Text.translatable('cw.pack.block.warping_frame_slab'))
+	event.create('stacked_warping_frame').waterlogged().displayName(Text.translatable('cw.pack.block.warping_frame_slab'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
@@ -315,105 +315,105 @@ let eye = (id) => {
 		.unbreakable()
 		.box(0, 8, 0, 16, 16, 16)
 
-	event.create('warping_frame_rusted_half').displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
+	event.create('warping_frame_rusted_half').waterlogged().displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_frame_rusted').displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
+	event.create('warping_frame_rusted').waterlogged().displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_frame_rusted_end').displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
+	event.create('warping_frame_rusted_end').waterlogged().displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_frame_rusted_half_end').displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
+	event.create('warping_frame_rusted_half_end').waterlogged().displayName(Text.translatable('cw.pack.block.rusted_warping_frame'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_vent').displayName(Text.translatable('cw.pack.block.warping_vent'))
+	event.create('warping_vent').waterlogged().displayName(Text.translatable('cw.pack.block.warping_vent'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_vent_rusted_half').displayName(Text.translatable('cw.pack.block.rusted_warping_vent'))
+	event.create('warping_vent_rusted_half').waterlogged().displayName(Text.translatable('cw.pack.block.rusted_warping_vent'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('warping_vent_rusted').displayName(Text.translatable('cw.pack.block.rusted_warping_vent'))
+	event.create('warping_vent_rusted').waterlogged().displayName(Text.translatable('cw.pack.block.rusted_warping_vent'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('crimson_statue').displayName(Text.translatable('cw.pack.block.crimson_statue'))
+	event.create('crimson_statue').waterlogged().displayName(Text.translatable('cw.pack.block.crimson_statue'))
 		.fullBlock(true)
 		.material("calcite")
 		.soundType("calcite")
 
-	event.create('eye_pillar').displayName(Text.translatable('cw.pack.block.eye_pillar'))
+	event.create('eye_pillar').waterlogged().displayName(Text.translatable('cw.pack.block.eye_pillar'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('ancient_bricks').displayName(Text.translatable('cw.pack.block.ancient_bricks'))
+	event.create('ancient_bricks').waterlogged().displayName(Text.translatable('cw.pack.block.ancient_bricks'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('ancient_bricks_stairs', 'stairs').displayName(Text.translatable('cw.pack.block.ancient_brick_stairs'))
+	event.create('ancient_bricks_stairs', 'stairs').waterlogged().displayName(Text.translatable('cw.pack.block.ancient_brick_stairs'))
 	    .textureAll('kubejs:block/ancient_bricks/ancient_bricks1')
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('ancient_bricks_slab', 'slab').displayName(Text.translatable('cw.pack.block.ancient_brick_slab'))
+	event.create('ancient_bricks_slab', 'slab').waterlogged().displayName(Text.translatable('cw.pack.block.ancient_brick_slab'))
 	    .textureAll('kubejs:block/ancient_bricks/ancient_bricks1')
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('ancient_bricks_wall', 'wall').displayName(Text.translatable('cw.pack.block.ancient_brick_wall'))
+	event.create('ancient_bricks_wall', 'wall').waterlogged().displayName(Text.translatable('cw.pack.block.ancient_brick_wall'))
 	    .textureAll('kubejs:block/ancient_bricks/ancient_bricks1')
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('ancient_runes').displayName(Text.translatable('cw.pack.block.ancient_runes'))
+	event.create('ancient_runes').waterlogged().displayName(Text.translatable('cw.pack.block.ancient_runes'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('chiseled_ancient_bricks').displayName(Text.translatable('cw.pack.block.chiseled_ancient_bricks'))
+	event.create('chiseled_ancient_bricks').waterlogged().displayName(Text.translatable('cw.pack.block.chiseled_ancient_bricks'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('lightning_plinth').displayName(Text.translatable('cw.pack.block.lightning_plinth'))
+	event.create('lightning_plinth').waterlogged().displayName(Text.translatable('cw.pack.block.lightning_plinth'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("stone")
 		.unbreakable()
 
-	event.create('half_frame_bottom').displayName(Text.translatable('cw.pack.block.machine_frame_bottom'))
+	event.create('half_frame_bottom').waterlogged().displayName(Text.translatable('cw.pack.block.machine_frame_bottom'))
 		.material('lantern').hardness(1.5)
 		.tagBlock('minecraft:mineable/pickaxe')
 		.soundType("lantern")
@@ -426,7 +426,7 @@ let eye = (id) => {
 		.box(11, 0, 0, 16, 5, 16, true)
 		.box(0, 0, 0, 5, 5, 16, true)
 
-	event.create('half_frame_top').displayName(Text.translatable('cw.pack.block.machine_frame_top'))
+	event.create('half_frame_top').waterlogged().displayName(Text.translatable('cw.pack.block.machine_frame_top'))
 		.material('lantern').hardness(1.5)
 		.tagBlock('minecraft:mineable/pickaxe')
 		.soundType("lantern")
@@ -447,80 +447,80 @@ let eye = (id) => {
 		.box(4, 4, 4, 12, 12, 12, true)
 		.waterlogged()
 
-	event.create('ancient_core').displayName(Text.translatable('cw.pack.block.ancient_redstone_core'))
+	event.create('ancient_core').waterlogged().displayName(Text.translatable('cw.pack.block.ancient_redstone_core'))
 		.material('stone')
 		.soundType("stone")
 		.unbreakable()
 		.lightLevel(1.0)
 
-	event.create('emergency_fuses').displayName(Text.translatable('cw.pack.block.emergency_fuses'))
+	event.create('emergency_fuses').waterlogged().displayName(Text.translatable('cw.pack.block.emergency_fuses'))
 		.fullBlock(true)
 		.material("wood")
 		.soundType("cherry_wood")
 		.hardness(0.5)
 
-	event.create('coin_pile_gold').displayName(Text.translatable('cw.pack.block.gold_coins'))
+	event.create('coin_pile_gold').waterlogged().displayName(Text.translatable('cw.pack.block.gold_coins'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("chain")
 		.hardness(0.2)
 		.tagBlock("mineable/shovel") 
 
-	event.create('coin_bag_gold').displayName(Text.translatable('cw.pack.block.bag_of_gold_coins'))
+	event.create('coin_bag_gold').waterlogged().displayName(Text.translatable('cw.pack.block.bag_of_gold_coins'))
 		.fullBlock(true)
 		.material("stone")
 		.soundType("chain")
 		.hardness(0.2)
 		.tagBlock("mineable/shovel") 
 
-	event.create('nuke_open').displayName(Text.translatable('cw.pack.block.opened_nuclear_bomb'))
+	event.create('nuke_open').waterlogged().displayName(Text.translatable('cw.pack.block.opened_nuclear_bomb'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('computer').displayName(Text.translatable('cw.pack.block.computer'))
+	event.create('computer').waterlogged().displayName(Text.translatable('cw.pack.block.computer'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 
-	event.create('supercomputer').displayName(Text.translatable('cw.pack.block.supercomputer'))
+	event.create('supercomputer').waterlogged().displayName(Text.translatable('cw.pack.block.supercomputer'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 
-	event.create('recaptured_consciousness').displayName(Text.translatable('cw.pack.block.recaptured_consciousness'))
+	event.create('recaptured_consciousness').waterlogged().displayName(Text.translatable('cw.pack.block.recaptured_consciousness'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 
-	event.create('recaptured_consciousness_empty').displayName(Text.translatable('cw.pack.block.consciousness_container'))
+	event.create('recaptured_consciousness_empty').waterlogged().displayName(Text.translatable('cw.pack.block.consciousness_container'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 
-	event.create('modular_reactor').displayName(Text.translatable('cw.pack.block.modular_reactor'))
+	event.create('modular_reactor').waterlogged().displayName(Text.translatable('cw.pack.block.modular_reactor'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 
-	event.create('modular_reactor_empty').displayName(Text.translatable('cw.pack.block.empty_modular_reactor'))
+	event.create('modular_reactor_empty').waterlogged().displayName(Text.translatable('cw.pack.block.empty_modular_reactor'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 
-	event.create('vector_tuner').displayName(Text.translatable('cw.pack.block.vector_tuner'))
+	event.create('vector_tuner').waterlogged().displayName(Text.translatable('cw.pack.block.vector_tuner'))
 		.fullBlock(true)
 		.material("netherite_block")
 		.soundType("netherite_block")
 		.unbreakable()
 
-	event.create('block_shiny_ingot').displayName(Text.translatable('cw.pack.block.block_of_shiny_ingot'))
+	event.create('block_shiny_ingot').waterlogged().displayName(Text.translatable('cw.pack.block.block_of_shiny_ingot'))
 		.fullBlock(true)
 		.material("metal")
 		.soundType("metal")
 
-	event.create('engineering_light_empty').displayName(Text.translatable('cw.pack.block.light_engineering_frame'))
+	event.create('engineering_light_empty').waterlogged().displayName(Text.translatable('cw.pack.block.light_engineering_frame'))
 		.material('lantern').hardness(1.5)
 		.soundType("lantern")
 		.tagBlock('minecraft:mineable/pickaxe')
@@ -539,7 +539,7 @@ let eye = (id) => {
 		.box(3, 13, 13, 13, 16, 16)
 		.tagBlock('minecraft:mineable/pickaxe')
 
-	event.create('engineering_heavy_empty').displayName(Text.translatable('cw.pack.block.heavy_engineering_frame'))
+	event.create('engineering_heavy_empty').waterlogged().displayName(Text.translatable('cw.pack.block.heavy_engineering_frame'))
 		.material('lantern').hardness(1.5)
 		.soundType("lantern")
 		.renderType("cutout")
