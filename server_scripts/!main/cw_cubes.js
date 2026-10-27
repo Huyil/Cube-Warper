@@ -4296,6 +4296,18 @@ function c4BuildTeleporter(server, slot, a, logIt) {
         + ' ' + (bb.X0 + 9) + ' ' + bb.Y0 + ' ' + (bb.Z0 + 9) + ' minecraft:air')
     } catch (eH) {}
   }
+  // ★ 舱的 21³ 模板会把它下面 2 格（116/117）清成 air —— 正好是管道顶部和 117 的封堵层。
+  //   默认布局（舱地板=118）下，把独立管道模板（含 117 的 3×3 封堵 + 梯子）在舱建完后再铺回来。
+  try {
+    if (Math.floor(a.y) === Math.floor(C4_TELE_FLOOR)) {
+      let basP = c4BaseAnchor(slot)
+      let bxP = Math.floor(basP.x + 0.5), bzP = Math.floor(basP.z + 0.5)
+      let trP = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_pipe_ladder '
+        + (bxP - 2) + ' ' + (basP.y + 1) + ' ' + (bzP - 2)))
+      if (trP > 0) console.info('[C4] 舱建完后补回管道+封堵层 slot=' + slot + ' @' + (bxP - 2) + ',' + (basP.y + 1) + ',' + (bzP - 2))
+    }
+  } catch (eP2) { console.warn('[C4] 补回管道模板失败: ' + eP2) }
+
   // 排气孔 marker：模板里 7 个 warping_vent 是死方块，数据包靠 tag=vent 的 marker 喷粒子
   try {
     server.runCommandSilent('execute in minecraft:overworld run kill @e[type=marker,tag=c4vent' + slot + ']')
