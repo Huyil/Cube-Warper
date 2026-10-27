@@ -2534,6 +2534,20 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
     return 1
   })))
 
+  // /cube admin expand <slot> <face> [force] —— 基地扩建（模式一：每面 +16）
+  let expRoot = cmdRoot.literal('expand').requires(src => src.hasPermission(4))
+  let expSlot = cmdRoot.argument('slot', IAT.integer(0))
+  ;['px', 'nx', 'pz', 'nz', 'py'].forEach(face => {
+    expSlot.then(cmdRoot.literal(face).executes(ctx => {
+      c4Reply(ctx, c4ExpandFace(ctx.source.server, IAT.getInteger(ctx, 'slot'), face, false))
+      return 1
+    }).then(cmdRoot.literal('force').executes(ctx => {
+      c4Reply(ctx, c4ExpandFace(ctx.source.server, IAT.getInteger(ctx, 'slot'), face, true))
+      return 1
+    })))
+  })
+  root.then(expRoot.then(expSlot))
+
   root.then(cmdRoot.literal('flush').requires(src => src.hasPermission(2)).executes(ctx => {
     C4_Q = []; C4_BUSY = null
     ctx.source.server.runCommandSilent('tag @e[type=marker,tag=cw_core] remove pre_runtime')
@@ -3350,10 +3364,13 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     console.info('[BUILD] c4BtnPos=' + c4BtnPos(slot).x + ',' + c4BtnPos(slot).y + ',' + c4BtnPos(slot).z
       + ' → 面板=' + bpx + ',' + bpy + ',' + bpz + ' 按钮=' + bpx + ',' + bpy + ',' + (bpz - 1))
   }
-  run(`setblock ${bpx} ${bpy} ${bpz} kubejs:warping_controls`)
-  run(`setblock ${bpx + 1} ${bpy} ${bpz} kubejs:warping_interface`)
-  run(`setblock ${bpx - 1} ${bpy} ${bpz} kubejs:warping_disc_drive`)
-  run(`setblock ${bpx} ${bpy} ${bpz - 1} kubejs:launch_button[facing=north]`)
+  // slot === -1：扩建重建用（这间房不是机器本体，不摆操控台/启动按钮）
+  if (slot !== -1) {
+    run(`setblock ${bpx} ${bpy} ${bpz} kubejs:warping_controls`)
+    run(`setblock ${bpx + 1} ${bpy} ${bpz} kubejs:warping_interface`)
+    run(`setblock ${bpx - 1} ${bpy} ${bpz} kubejs:warping_disc_drive`)
+    run(`setblock ${bpx} ${bpy} ${bpz - 1} kubejs:launch_button[facing=north]`)
+  }
   // 隐形光源：不加的话房间里/透过门看到的目的地笼子是全黑的（看起来就像"门坏了"）
   run(`setblock ${FX} ${b.Y0 + 8} ${FZ} minecraft:light[level=15]`)
   // 排气孔（原包 17x17 的 warping_vent 位置，按当前尺寸换算到四个角附近）
@@ -3391,6 +3408,45 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   }
   return b
 }
+// ---------------------------------------------------------------------------- 基地扩建（模式一：按面 +16）
+// 移植自 81b29e7：cube.ext 记五个面各自的扩展级数，扩建 = ext+1 后整间房重铺一遍。
+// 已知缺陷（也正是被放弃的原因）：c4BuildRoom('all') 先 fill 空气再重建，
+// 基地里已经摆好的箱子/机器/掉落物会一起消失 —— 就是"扩建吃掉基地"的来源。
+// 实际采用的是模式二（cw_expand.js 的格子模型，只补新增格的外边界）。
+function c4ExpandFace(server, slot, face, force) {
+  const C4_EXT_FACES = ['px', 'nx', 'pz', 'nz', 'py']
+  if (C4_EXT_FACES.indexOf(face) < 0) return 'face 只接受 ' + C4_EXT_FACES.join('/')
+  let info = c4TeamOfSlot(slot)
+  let cube = info ? info.cube : null
+  if (!cube) return '槽位 ' + slot + ' 还没有基地'
+  let oldExt = c4Ext(cube)
+  let cur = { px: oldExt.px, nx: oldExt.nx, pz: oldExt.pz, nz: oldExt.nz, py: oldExt.py }
+  cur[face] = cur[face] + 1
+  let core = c4BaseCore(slot)
+  let b0 = c4RoomBox(core.x, core.y, core.z, oldExt)
+  let b1 = c4RoomBox(core.x, core.y, core.z, cur)
+  let inside = 0
+  try {
+    server.players.forEach(p => {
+      if (c4DimOf(p) !== 'minecraft:overworld') return
+      if (p.x >= b1.X0 && p.x <= b1.X1 + 1 && p.z >= b1.Z0 && p.z <= b1.Z1 + 1
+        && p.y >= b1.Y0 && p.y <= b1.Y1 + 1) inside++
+    })
+  } catch (e0) {}
+  if (inside > 0 && !force) return '基地里还有 ' + inside + ' 人：扩建会清空内部，确认请加 force'
+  cube.ext = cur
+  c4Save()
+  console.info('[C4] 扩建 slot=' + slot + ' face=' + face + ' ' + JSON.stringify(oldExt) + ' → ' + JSON.stringify(cur)
+    + ' 旧箱 X ' + b0.X0 + '..' + b0.X1 + ' / Y ' + b0.Y0 + '..' + b0.Y1
+    + ' 新箱 X ' + b1.X0 + '..' + b1.X1 + ' / Y ' + b1.Y0 + '..' + b1.Y1)
+  try { c4BuildRoom(server, 'minecraft:overworld', core.x, core.y, core.z, cur, false, 'all', oldExt, -1) }
+  catch (e1) { console.warn('[C4] 扩建重建失败: ' + e1); return '扩建失败: ' + e1 }
+  // 重铺地板会盖掉 3×3 洞，扩完补一次
+  try { c4ActivateHole(server, slot, null) } catch (e2) { console.warn('[C4] 扩建后重建 3×3 洞失败: ' + e2) }
+  return '扩建 ' + face + ' 完成 · 基地 ' + (17 + 16 * (cur.px + cur.nx)) + '×'
+    + (17 + 16 * (cur.pz + cur.nz)) + '×' + (17 + 16 * cur.py) + '（内部已清空）'
+}
+
 // 6 扇门：位置/尺寸都按当前 ext 算（矩形门）
 // 6 个门面的期望坐标/尺寸（扩展/校验/建门共用同一张表）
 // ext 感知的六面门面中心：一律由 c4RoomBox 推导（外壳外 0.51）
