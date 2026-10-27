@@ -3,20 +3,18 @@ execute as @e[tag=outer_core] at @s run fill ~-8 ~-8 ~-8 ~8 ~8 ~8 air
 kill @e[type=marker,tag=outer_core]
 
 ### INITIATE CONNECTION
-execute as @e[type=immersive_portals:portal] at @s run portal nbt {isVisible:false,bindCluster:false}
-execute as @e[type=immersive_portals:portal,name=main_cube] at @s run portal set_portal_destination hexahedron:the_edge_of_reality ~ ~ ~
-execute at @e[type=minecraft:marker,tag=core] at @s in hexahedron:the_edge_of_reality run summon marker ~ ~ ~ {NoGravity:1b,Tags:["outer_core"]}
+execute at @s as @e[type=immersive_portals:portal,name=main_cube,distance=..96,tag=!cw_lobby] at @s run portal set_portal_destination hexahedron:the_edge_of_reality ~ ~ ~
+execute at @s in hexahedron:the_edge_of_reality run summon marker ~ ~ ~ {NoGravity:1b,Tags:["outer_core"]}
 
 ### QUE REPOSITIONING
 schedule function hexahedron:repositioning/none 5s
 
 ### START TELEPORTATION
-tag @e[type=minecraft:marker,tag=core] add running
+tag @s add running
 
 ### PLACE STRUCTURE
 schedule function hexahedron:build_hexahedron/lost_hexahedron 7s
 
 ### KEEP YOUR FRIENDS INSIDE THE VEHICLE AT ALL TIMES
 execute if score warp_pull_players hex_settings matches 1 in minecraft:overworld as @e[type=marker,tag=core] at @s run tag @a[distance=..50] add inside_cube
-execute if score warp_pull_players hex_settings matches 1 in minecraft:overworld as @e[type=marker,tag=core] at @s if entity @a[tag=!inside_cube,tag=init] run tp @a[tag=!inside_cube,tag=init] ~ ~-7 ~4
 tag @a remove inside_cube

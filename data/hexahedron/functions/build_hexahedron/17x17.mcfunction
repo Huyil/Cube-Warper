@@ -27,7 +27,7 @@ fill ~-7 ~-3 ~-7 ~7 ~-3 ~7 kubejs:warping_frame_platform
 
 # Hole
 fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 air
-execute as @e[type=minecraft:marker,tag=outer_core] at @s run fill ~1 ~-8 ~1 ~-1 ~-8 ~-1 kubejs:hexahedron_filling
+execute as @e[type=minecraft:marker,tag=outer_core] at @s run fill ~1 ~-8 ~1 ~-1 ~-8 ~-1 minecraft:structure_void
 fill ~-2 ~-3 ~-2 ~2 ~-3 ~-2 kubejs:warping_frame
 fill ~-2 ~-3 ~2 ~2 ~-3 ~2 kubejs:warping_frame
 fill ~-2 ~-3 ~-2 ~-2 ~-3 ~2 kubejs:warping_frame
@@ -55,3 +55,5 @@ summon marker ~-4 ~-3 ~-8 {Tags:["vent"]}
 setblock ~8 ~-3 ~2 kubejs:warping_vent
 summon marker ~8 ~-3 ~2 {Tags:["vent"]}
 
+# Hidden light source (same as the KubeJS-built rooms)
+setblock ~ ~8 ~ minecraft:light[level=15]

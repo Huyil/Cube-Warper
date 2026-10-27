@@ -1,5 +1,5 @@
-execute as @e[type=caverns_and_chasms:large_arrow,distance=..30] at @s run particle minecraft:flash ~ ~ ~ 0 0 0 0 1 force
-kill @e[type=caverns_and_chasms:large_arrow,distance=..30]
+execute as @e[type=caverns_and_chasms:large_arrow,distance=..96] at @s run particle minecraft:flash ~ ~ ~ 0 0 0 0 1 force
+kill @e[type=caverns_and_chasms:large_arrow,distance=..96]
 tag @e[type=marker,tag=cube_marker,distance=..20] add crystalized
 
 playsound caverns_and_chasms:entity.large_arrow.hit master @a ~ ~ ~ 50 0

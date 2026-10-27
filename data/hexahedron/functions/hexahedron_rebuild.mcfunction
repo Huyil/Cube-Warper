@@ -3,7 +3,6 @@ tellraw @p {"translate":"cw.rebuild.start","bold":true,"color":"gold"}
 tellraw @p {"translate":"cw.rebuild.stay","color":"yellow"}
 
 # Force everyone on board
-execute in minecraft:overworld run tp @a 0.5 98 6.5
 
 
 # Terminate existing outer hexahedron
@@ -11,9 +10,8 @@ execute as @e[tag=outer_core] at @s run fill ~-8 ~-8 ~-8 ~8 ~8 ~8 air
 
 
 # Remove old portals
-execute as @e[type=minecraft:marker,tag=core] at @s as @e[type=minecraft:marker,distance=..30] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
-execute as @e[type=minecraft:marker,tag=outer_core] at @s as @e[type=minecraft:marker,distance=..30] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
-kill @e[type=immersive_portals:portal]
+execute as @e[type=minecraft:marker,tag=core] at @s as @e[type=minecraft:marker,distance=..96] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
+execute as @e[type=minecraft:marker,tag=outer_core] at @s as @e[type=minecraft:marker,distance=..96] unless entity @s[tag=anchor] unless entity @s[tag=hex_anchor] run kill @s
 
 
 # Portals
@@ -34,10 +32,7 @@ execute positioned 0 100.5 0 in overworld run function hexahedron:build_hexahedr
 
 
 # Make connection
-execute as @e[type=minecraft:marker,tag=portal] at @s run portal cb_make_portal 17 17 @s @s main_cube
-execute as @e[type=immersive_portals:portal,name=main_cube] at @s run portal set_portal_destination minecraft:overworld ~ ~ ~
 function hexahedron:build_hexahedron/tag_portals
-execute as @e[type=immersive_portals:portal,name=main_cube] at @s run portal complete_bi_way_portal
 
 
 # Schedule proper landing in the hexahedron_graveyard
