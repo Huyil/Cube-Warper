@@ -1037,6 +1037,18 @@ function c4BuildBaseBox(server, slot) {
   for (let yy = Y0; yy <= Y1; yy += 8) {
     run('fill ' + X0 + ' ' + yy + ' ' + Z0 + ' ' + X1 + ' ' + Math.min(yy + 7, Y1) + ' ' + Z1 + ' minecraft:air')
   }
+  // ★ 预制模板优先：一条 place template 建整个封闭基地盒（1530 方块：地板/四壁/天花板+3×3洞/灯/7排气孔）。
+  //   模板本身不含 barrier/structure_void/hexahedron_filling；放置前的 ① 已把 17³ 清成 air，
+  //   模板失败则回退逐条 fill。
+  let usedTmpl = false
+  try {
+    let tr = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_base17 '
+      + X0 + ' ' + Y0 + ' ' + Z0))
+    usedTmpl = tr > 0
+  } catch (eTm) { usedTmpl = false }
+  if (usedTmpl) console.info('[C4] 基地模板已放置 slot=' + slot + ' @' + X0 + ',' + Y0 + ',' + Z0 + '（1530 方块 / 1 条命令）')
+  else console.warn('[C4] 模板 hexahedron:cw_base17 不可用 → 回退逐条 fill')
+  if (!usedTmpl) {
   // ② 地板整面平台（不再留 3×3 地板洞）
   run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y0 + ' ' + Z1 + ' kubejs:warping_frame_platform')
   // ③ 天花板 + 四面墙（六面即封闭盒；地板那一面已经在 ② 铺成 platform）
@@ -1047,6 +1059,11 @@ function c4BuildBaseBox(server, slot) {
   run('fill ' + X0 + ' ' + Y0 + ' ' + Z1 + ' ' + X1 + ' ' + Y1 + ' ' + Z1 + ' kubejs:warping_frame')   // +z
   // ④ 天花板中央 3×3 洞（唯一的出口 = 隧道口）
   run('fill ' + (a.x - 1) + ' ' + Y1 + ' ' + (a.z - 1) + ' ' + (a.x + 1) + ' ' + Y1 + ' ' + (a.z + 1) + ' minecraft:air')
+  }
+  // 不管模板/逐条：再兜底清一次不可见方块（旧档残留），只 replace 这三种
+  ;['minecraft:barrier', 'minecraft:structure_void', 'kubejs:hexahedron_filling'].forEach(t => {
+    run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y1 + ' ' + Z1 + ' minecraft:air replace ' + t)
+  })
   // ⑤ 隐藏光源：房间中央（和原 17x17 的 ~ ~8 ~ 同高）+ 天花板下 1 格按每 5 格补一圈
   //    （初始节点也不会再出现"一片黑"；light 无碰撞、不可见，只补空气）
   run('setblock ' + a.x + ' ' + (Y0 + 8) + ' ' + a.z + ' minecraft:light[level=15]')

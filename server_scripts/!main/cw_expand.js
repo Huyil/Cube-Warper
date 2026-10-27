@@ -395,8 +395,15 @@ function c4AddCell(server, cube, dir, player, force) {
       console.info('[C4] 向下扩建挖空内部 slot=' + slot + ' cell=' + key + ' y ' + (b.Y0 + 1) + '..' + (b.Y1 - 1))
     } catch (eDig) { console.warn('[C4] 向下扩建挖空失败: ' + eDig) }
   }
-  // ⑤ 清掉新格里的旧外壳/旧版填充（只动这两种方块）
+  // ⑤ 清掉新格里的旧外壳/旧版填充（只动这两种方块；模板本身不含不可见方块）
   c4ClearNewCellFill(server, b)
+  // ★ 新格用预制封闭立方体模板（1548 方块 / 1 条命令）；失败则交给 c4RebuildCells 逐面铺
+  try {
+    let tr = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_cell17 '
+      + b.X0 + ' ' + b.Y0 + ' ' + b.Z0))
+    if (tr > 0) console.info('[C4] 扩建格模板已放置 ' + key + ' @' + b.X0 + ',' + b.Y0 + ',' + b.Z0 + '（1548 方块 / 1 条命令）')
+    else console.warn('[C4] 模板 hexahedron:cw_cell17 不可用（格 ' + key + '）→ 回退逐面 fill')
+  } catch (eTm2) { console.warn('[C4] 扩建格模板失败: ' + eTm2) }
   set[key] = 1
   cube.cells = Object.keys(set)
   C.save()
