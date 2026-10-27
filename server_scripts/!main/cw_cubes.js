@@ -3546,6 +3546,20 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     console.info('[BUILD] slot=' + slot + ' core=' + cx + ',' + cy + ',' + cz
       + ' box=' + b.X0 + '..' + b.X1 + ' / ' + b.Y0 + '..' + b.Y1 + ' / ' + b.Z0 + '..' + b.Z1)
   }
+  // ★ 预制模板优先：一条 place template 建完整 17³ 房间（地板/顶圈/四角柱/面板/灯/排气孔 = 409 方块）。
+  //   模板缺失/失败时回退到下面的逐条 fill（向后兼容）。
+  //   带 slot 的调用（私有笼子等，面板位置按按钮锚点）不使用模板，保持原逻辑。
+  let usedTmpl = false
+  if (!(slot !== undefined && slot !== null && slot >= 0)) {
+    try {
+      let tr = Number(server.runCommandSilent('execute in ' + dimId + ' run place template hexahedron:cw_dest_room17 '
+        + b.X0 + ' ' + b.Y0 + ' ' + b.Z0))
+      usedTmpl = tr > 0
+    } catch (eTm) { usedTmpl = false }
+    if (usedTmpl) console.info('[C4] 目的地房间模板已放置 ' + dimId + ' @' + b.X0 + ',' + b.Y0 + ',' + b.Z0 + '（409 方块 / 1 条命令）')
+    else console.warn('[C4] 模板 hexahedron:cw_dest_room17 不可用 → 回退逐条 fill')
+  }
+  if (!usedTmpl) {
   let floorCmd = 'fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform'
   let floorRet = -1
   try { floorRet = Number(server.runCommandSilent('execute in ' + dimId + ' run ' + floorCmd)) } catch (eF) { floorRet = -2 }
@@ -3600,6 +3614,17 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
       vents.forEach(q => run(`summon marker ${q[0]} ${q[1]} ${q[2]} {Tags:["vent","c4vent${slot}"]}`))
     }
   } catch (e) {}
+  } else if (slot !== undefined && slot !== null && slot >= 0) {
+    // 模板已含 vent 方块，这里只补 marker（数据包 particles 依赖 tag=vent）
+    try {
+      let vents = [
+        [b.X1, b.Y0 + 1, b.Z1], [b.X0, b.Y0 + 5, b.Z1], [b.X1, b.Y1 - 5, b.Z0],
+        [b.X0, b.Y1, FZ], [FX + 4, b.Y1, b.Z1], [b.X0, b.Y0, FZ - 4]
+      ]
+      run(`kill @e[type=marker,tag=c4vent${slot}]`)
+      vents.forEach(q => run(`summon marker ${q[0]} ${q[1]} ${q[2]} {Tags:["vent","c4vent${slot}"]}`))
+    } catch (e) {}
+  }
   if (fillHole) {
     // 目的地：内侧墙面只把框梁之间的空气补成 filling（不动框梁/地板/面板/门）
     run(`fill ${b.X1} ${b.Y0 + 1} ${b.Z0 + 1} ${b.X1} ${b.Y1 - 1} ${b.Z1 - 1} minecraft:air replace minecraft:air`)
