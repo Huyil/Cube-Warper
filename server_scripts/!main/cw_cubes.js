@@ -4859,25 +4859,43 @@ function c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext) {
   } catch (e3) { console.warn('[C4] 清舱底 down 面失败: ' + e3) }
   return n
 }
-// 清掉隧道里历史遗留的 3×3 门（四代 tag 一个不漏；绝不碰 cw_lobby / 17×17 的 cw_face_*）
-// 圆心 = 隧道中点、半径 = 盖住整根管道：旧存档管道中段残留的第 2/3 扇门也在范围内。
+// 清掉历史遗留的 3×3 门（四代 tag 一个不漏；绝不碰 cw_lobby / 17×17 的 cw_face_*）
+//
+// 2026-10-27 修：原来"圆心 = 管道中点、半径 = ceil(高差/2)+4"的球太窄 ——
+// 舱在 118、基地天花板 113 时半径只有 7，而旧存档的 3×3 门可能落在【基地地板】
+// （实测 y97.8，c4Cube 中心 x/z，距中点 18 格），扫不到 → 表现就是"拆不掉"。
+// 现在改为：以基地中心为圆心扫整个竖直范围（半径 ≥96），并且按归属 tag 精确匹配；
+// 3×3 链接已彻底废弃，所以【本台的所有 cw_link 系列门】都该清掉，不分高度。
 function c4KillPipeLinks(server, slot) {
   let n = 0
   try {
     let bas = c4BaseAnchor(slot), tel = c4TeleAnchor(slot)
-    let baseCeil = bas.y + 16
+    let info = c4TeamOfSlot(slot)
+    let cubeId = (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot)
     let bx = bas.x + 0.5, bz = bas.z + 0.5
-    let midY = (baseCeil + tel.y) / 2
-    let r = Math.ceil((tel.y - baseCeil) / 2) + 4
-    if (!(r > 0)) r = 24
-    ;['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base'].forEach(tg => {
+    // 圆心放在基地与舱体中间，半径覆盖两者并留足余量（舱可能被搬过）
+    let midY = Math.floor((bas.y + tel.y + 16) / 2)
+    let r = Math.max(96, Math.ceil(Math.abs(tel.y - bas.y) / 2) + 48)
+    let tags = ['cw_link', 'cw_pipe', 'cw_link_up', 'cw_link_down', 'cw_face_link', 'cw_face_link_base']
+    let ownTags = ['cw_slot' + slot, 'cw_id_' + cubeId]
+    tags.forEach(tg => {
+      // ① 带归属 tag 的：半径 r（本台的，随便在哪都清）
+      ownTags.forEach(own => {
+        try {
+          let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + bx + ' ' + midY + ' ' + bz
+            + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',tag=' + own + ',distance=..' + r + ']'))
+          if (!isNaN(k)) n += k
+        } catch (e) {}
+      })
+      // ② 没归属 tag 的老门：只清基地附近 32 格（别的槽位在 4000 格外，不会误伤）
       try {
-        let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + bx + ' ' + midY + ' ' + bz
-          + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..' + r + ']'))
-        if (!isNaN(k)) n += k
-      } catch (e) {}
+        let k2 = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + bx + ' ' + midY + ' ' + bz
+          + ' run kill @e[type=immersive_portals:portal,tag=' + tg + ',distance=..32,tag=!cw_slot' + slot + ']'))
+        if (!isNaN(k2)) n += k2
+      } catch (e2) {}
     })
-    if (n > 0) console.info('[C4] 隧道清旧 3×3 门 slot=' + slot + '：' + n + ' 扇（圆心@' + bx + ',' + midY + ',' + bz + ' r=' + r + '）')
+    if (n > 0) console.info('[C4] 隧道清旧 3×3 门 slot=' + slot + '：' + n + ' 扇（圆心@' + bx + ',' + midY + ',' + bz
+      + ' r=' + r + '，含无归属老门 32 格内）')
   } catch (e2) { console.warn('[C4] 清 3×3 门失败: ' + e2) }
   return n
 }
