@@ -69,7 +69,7 @@ const C4_AUTO = {
   cleanStrayLinks: false,  // 启动时清 slot2..14 管道 3×3 → 默认关
   purgeLobby: false,       // 清出生大厅的门（函数里本来也 return 0）
   spawnOnLogin: false,     // 登录自动传送到立方体 → 默认关
-  spawnOnRespawn: true,    // 重生自动传送（用户要求开）
+  spawnOnRespawn: false,   // 重生自动传送：默认关闭（重生后再同步传送会导致黑屏/卡顿；需要时改回 true）
   selfTest: false,         // 自检（只读，但会 setIsVisible）→ 默认关
   chunkLoader: true        // 只 forceload/加载区块，不改方块
 }
