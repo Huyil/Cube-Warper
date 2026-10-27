@@ -1,11 +1,4 @@
-setblock ~ ~-8 ~ air
-setblock ~ ~-8 ~ immersiveengineering:capacitor_lv{energy:0,sideConfig_1:1,sideConfig_2:1,sideConfig_3:1,sideConfig_4:1,sideConfig_5:1,sideConfig_6:1,}
-
-playsound item.trident.thunder weather @a[distance=..100] ~ ~ ~ 30 0
-playsound item.trident.return weather @a[distance=..100] ~ ~ ~ 30 0
-playsound immersiveengineering:charge_slow weather @a[distance=..100] ~ ~ ~ 30 1
-
-summon marker ~ ~ ~ {Tags:["lightning"]}
-
-function hexahedron:effects/lightning
-
+# [已迁移] 逻辑在 KubeJS: server_scripts/!main/shrine_lightning_multi.js（lStartRitual）
+# 本文件故意留空（只有注释），防止与 JS 双份执行。
+# 原内容：setblock 拆放 capacitor_lv（会连 sideConfig_1..6 一起重置的 bug）
+#         + 三声音效 + summon marker ~ ~ ~ {Tags:["lightning"]} + 调 effects/lightning
