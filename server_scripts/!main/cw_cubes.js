@@ -1660,8 +1660,10 @@ function c4CheckDest(server, slot, idName, d, dx, dy, dz, attempt, cb) {
   let fwdAll = 0, fwdOwn = 0
   try { fwdAll = c4PortalsInDim(server, 'minecraft:overworld', tp.x, tp.y, tp.z, 240).length } catch (e2) {}
   try { fwdOwn = c4CountFaceDoors(server, tp.x, tp.y, tp.z, 240) } catch (e3) {}
-  console.info('[C4] 目的地校验 rev=' + rev + '/6 正向在场=' + fwdAll + ' 本队正向=' + fwdOwn + ' 轮=' + attempt)
-  if (rev >= 6) { cb(true, rev, fwdOwn, fwdAll); return }
+  // 隧道打开时目的地那扇反向 down 门会被清掉 → 只要求 5 扇反向门
+  let needRev = c4HoleOpen(slot) ? 5 : 6
+  console.info('[C4] 目的地校验 rev=' + rev + '/' + needRev + ' 正向在场=' + fwdAll + ' 本队正向=' + fwdOwn + ' 轮=' + attempt)
+  if (rev >= needRev) { cb(true, rev, fwdOwn, fwdAll); return }
   if (attempt >= 2) {
     console.warn('[C4] 反向门 rev=' + rev + ' 补建后仍不足')
     cb(false, rev, fwdOwn, fwdAll)
@@ -1921,6 +1923,8 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
   } catch (e) {}
   job.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z, cx: Math.floor(d.x / 16) * 16, cz: Math.floor(d.z / 16) * 16 }
   job.destOK = true
+  // 隧道打开时，目的地房间不该有反向 down 门（舱底是洞）→ 到站后顺手清掉
+  try { if (c4HoleOpen(slot)) c4KillReverseDowns(server, slot) } catch (eRD) {}
   console.info('[C4] 剧场版 e 校验通过 → 跃迁完成 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
   server.scheduleInTicks(30, () => c4CorrectLanding(server, slot, job, d))
   server.scheduleInTicks(100, () => c4CorrectLanding(server, slot, job, d))
@@ -2051,9 +2055,11 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
           } catch (eF) { n = 0 }
           console.info('[C4] 动画版 e 最终指门 ' + n + '/6 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
           try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { console.warn('[C4] 反向门失败: ' + e) }
+          // 隧道打开时 down 面本来就该缺席：只要求 5 面，否则会误报"跃迁中止"
+          let needFwd = c4HoleOpen(slot) ? 5 : 6
           c4CheckDest(server, slot, idName, d, dx, dy, dz, 0, (ok, rev, fwdOwn, fwdAll) => {
-            if (!ok || n < 6 || fwdOwn < 6) {
-              console.warn('[C4] 剧场版 e 校验失败：指门=' + n + '/6 本队正向=' + fwdOwn + ' 反向=' + rev
+            if (!ok || n < needFwd || fwdOwn < needFwd) {
+              console.warn('[C4] 剧场版 e 校验失败：指门=' + n + '/' + needFwd + ' 本队正向=' + fwdOwn + ' 反向=' + rev
                 + '（在场门=' + fwdAll + '） → 回滚到私有笼子')
               c4TellTeam(server, slot, c4t('cw.warp.abort'))
               try { c4BarTeam(server, slot, '跃迁失败：目的地未就绪，已回到起点') } catch (e7) {}
@@ -3458,6 +3464,7 @@ function c4CmdDoors(ctx, slot) {
   try {
     aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(rDimId), rpx, rpy, rpz, false, rDimId, cubeId, ext0, false, slot)
   } catch (e4) { console.warn('[C4] 指门失败: ' + e4) }
+  if (c4HoleOpen(slot)) { try { c4KillReverseDowns(server, slot) } catch (eRD3) {} }
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
   })
@@ -4903,6 +4910,34 @@ function c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext) {
   } catch (e3) { console.warn('[C4] 清舱底 down 面失败: ' + e3) }
   return n
 }
+// 清掉"反向 down 门"：隧道打开时，目的地那间房还留着一扇 cw_face_down + cw_rev 的门，
+// 它指向舱底（现在是洞），玩家会看到"底部还有一扇大传送门"。只清带本台归属的反向 down。
+function c4KillReverseDowns(server, slot) {
+  let info = c4TeamOfSlot(slot)
+  if (!info || !info.cube) return 0
+  let cubeId = info.cube.id || ('cube' + slot)
+  let n = 0
+  try {
+    c4All(server).forEach(e => {
+      try {
+        if (!c4IsPortal(e)) return
+        if (!c4HasTag(e, 'cw_face_down') || !c4HasTag(e, 'cw_rev')) return
+        if (!c4DoorOwnedBy(e, slot, cubeId)) return
+        let dim = c4DimOf(e)
+        let ex = Number(e.x), ey = Number(e.y), ez = Number(e.z)
+        if (!dim || dim === '?' || !isFinite(ex) || !isFinite(ey) || !isFinite(ez)) return
+        try {
+          let k = Number(server.runCommandSilent('execute in ' + dim + ' positioned ' + ex + ' ' + ey + ' ' + ez
+            + ' run kill @e[type=immersive_portals:portal,tag=cw_face_down,tag=cw_rev,tag=cw_slot' + slot + ',distance=..3]'))
+          if (!isNaN(k)) n += k
+        } catch (e1) {}
+      } catch (err) {}
+    })
+  } catch (e2) { console.warn('[C4] 清反向 down 门失败: ' + e2) }
+  if (n > 0) console.info('[C4] 隧道打开 slot=' + slot + '：清掉目的地反向 down 门 ' + n + ' 扇')
+  return n
+}
+
 // 清掉历史遗留的 3×3 门（四代 tag 一个不漏；绝不碰 cw_lobby / 17×17 的 cw_face_*）
 // 圆心 = 基地中心，半径覆盖整根竖直管道并留足余量（旧存档的 3×3 可能落在基地地板 y97，
 // 只扫管道中点会漏掉）。带归属 tag 的按大半径清；没归属的老门只清基地 32 格内。
@@ -5061,6 +5096,8 @@ function c4ToggleHole(server, slot, player) {
     }
     let n3 = c4KillPipeLinks(server, slot)
     let killed = c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext0)
+    // 目的地那扇反向 down 门也要清：否则隧道开着，目的地房间底部还留着一扇大传送门
+    try { c4KillReverseDowns(server, slot) } catch (eRD) {}
     cube.holeOpen = true
     c4Save()
     // forceload 生效后再补一次，防止"第一次没加载到"
@@ -5094,6 +5131,7 @@ function c4SyncHole(server, slot) {
       let k = c4KillDownFace(server, slot, cubeId, tp.x, tp.y, tp.z, ext0)
       if (k > 0) console.info('[C4] 隧道打开中 slot=' + slot + '：补清 ' + k + ' 扇舱底 down 面')
       n += k
+      try { n += c4KillReverseDowns(server, slot) } catch (eRD2) {}
     }
     console.info('[C4] 隧道同步 slot=' + slot + '：holeOpen=' + isOpen + ' 清 3×3 ' + n
       + ' 扇，结构=' + carve + '（down 面' + (isOpen ? '应缺席' : '由 c4EnsureSix 维护') + '）')
