@@ -50,6 +50,18 @@ ItemEvents.tooltip(event => {
   event.addAdvanced('kubejs:vector_operator_step11', (item, advanced, text) => {text.add(1, Text.gray(Text.translatable('cw.ui.tooltip.step_11_super_computers')).bold(true))  })
   event.addAdvanced('kubejs:vector_operator_step12', (item, advanced, text) => {text.add(1, Text.gray(Text.translatable('cw.ui.tooltip.step_12_vector_tuner')).bold(true))  })
 
+  // ── 立方体扩展器 / 拆除器：朝下 = 3×3 连通门，其它朝向 = 基地扩/缩 ──
+  event.addAdvanced('kubejs:cube_expander', (item, advanced, text) => {
+    text.add(1, Text.gray(Text.translatable('cw.ui.tooltip.expander_down')).bold(true))
+    text.add(2, Text.darkGray(Text.translatable('cw.ui.tooltip.expander_side')))
+    text.add(3, Text.darkGray(Text.translatable('cw.ui.tooltip.tools_in_base')))
+  })
+  event.addAdvanced('kubejs:cube_reducer', (item, advanced, text) => {
+    text.add(1, Text.gray(Text.translatable('cw.ui.tooltip.reducer_down')).bold(true))
+    text.add(2, Text.darkGray(Text.translatable('cw.ui.tooltip.reducer_side')))
+    text.add(3, Text.darkGray(Text.translatable('cw.ui.tooltip.tools_in_base')))
+  })
+
 
   //(1) +1 → total 3  → +3 → [1, 2, 3]
   //(2) *3 → total 6  → +3 → [4, 6, 9]

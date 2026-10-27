@@ -1080,7 +1080,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       let h2 = c4TeamOfSlot(slot)
       if (h2 && h2.cube) { h2.cube.tele = { x: a.x, y: a.y, z: a.z }; c4Save() }
       c4StripCabin(server, slot, true)
-      // 3×3 洞不自动生成：/cube admin hole <slot> 或整舱搬迁时自动连通
+      // 3×3 洞不自动生成：由玩家手持扩展器朝下右键二次确认（或 /cube admin hole）才建
       console.info('[C4] 新舱迁移完成 slot' + slot + '：传送器 @' + a.x + ',' + a.y + ',' + a.z + '（按钮 ' + a.x + ',' + (a.y + 1) + ',' + (a.z + 7) + '），基地按钮已清')
     } catch (e) { console.warn('[C4] 新舱传送器迁移失败: ' + e) }
   })
@@ -1189,7 +1189,7 @@ const C4_VECTOR_OPS = {
 }
 function c4SlotX(slot, i) { return c4BtnPos(slot).x + i }   // 算子位由按钮坐标派生
 // 操控台贴着 +z 内壁（Z1）：基础 z=8。
-// 注意：+z 面不可扩展（+z 是操控台所在面），所以 Z1 永远 = 8；
+// 注意：+z 面不可扩展（cw_expand 的 cmdExpand 明确拒绝 "+z 是操控台"），所以 Z1 永远 = 8；
 // 这里的偏移必须用 pz、不能是 nz —— 之前写 nz 会让 -z 每扩一级把读位往 +z 推 16 格，
 // 而操控台根本没动，于是算子全读成空气、种子恒为 0，跃迁起不来。
 function c4SlotZ(slot) {
@@ -2164,7 +2164,7 @@ BlockEvents.broken(event => {
         console.info('[C4] 保护方块被破坏已还原：' + id + ' @' + bx + ',' + by + ',' + bz)
       } catch (e1) {}
     })
-    try { event.player.tell(Text.of('⟢ 这是立方体的机器零件，拆不掉')) } catch (e2) {}
+    try { event.player.tell(Text.of('⟢ 这是立方体的机器零件，拆不掉（要用拆除器朝下双击来拆 3×3 门）')) } catch (e2) {}
   } catch (e) { console.warn('[C4] 保护方块检查失败: ' + e) }
 })
 
@@ -2203,7 +2203,7 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
         let n = 0
         try { n = c4ActivateHole(server, slot, null) } catch (eH) { console.warn('[C4] 迁移后自动连通 3×3 失败: ' + eH) }
         try {
-          clicker.tell(Text.of('⟢ 迁移完成：3×3 洞' + (n > 0 ? '已连通' : '未连通（可用 /cube admin hole 连通）') + '。请从洞口下去，到 y=' + C4_TELE_FLOOR + ' 的新按钮启动。'))
+          clicker.tell(Text.of('⟢ 迁移完成：3×3 洞' + (n > 0 ? '已连通' : '未连通（请手持扩展器朝下双击）') + '。请从洞口下去，到 y=' + C4_TELE_FLOOR + ' 的新按钮启动。'))
         } catch (e1) {}
       })
       return
@@ -2457,6 +2457,16 @@ ServerEvents.commandRegistry(event => {
   }
 })
 
+// 扩建命令委托给 cw_expand.js（global.CWE）。模块没加载时就地报错，不影响其它命令。
+function c4CweExpand(ctx, face, force) {
+  if (!global.CWE || !global.CWE.cmdExpand) { c4Reply(ctx, '扩建模块未加载（cw_expand.js）'); return 0 }
+  return global.CWE.cmdExpand(ctx, face, force)
+}
+function c4CweRebuild(ctx) {
+  if (!global.CWE || !global.CWE.cmdRebuild) { c4Reply(ctx, '扩建模块未加载（cw_expand.js）'); return 0 }
+  return global.CWE.cmdRebuild(ctx)
+}
+
 function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   root.then(cmdRoot.literal('info').executes(ctx => { c4CmdInfo(ctx); return 1 }))
 
@@ -2534,19 +2544,23 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
     return 1
   })))
 
-  // /cube admin expand <slot> <face> [force] —— 基地扩建（模式一：每面 +16）
-  let expRoot = cmdRoot.literal('expand').requires(src => src.hasPermission(4))
-  let expSlot = cmdRoot.argument('slot', IAT.integer(0))
-  ;['px', 'nx', 'pz', 'nz', 'py'].forEach(face => {
-    expSlot.then(cmdRoot.literal(face).executes(ctx => {
-      c4Reply(ctx, c4ExpandFace(ctx.source.server, IAT.getInteger(ctx, 'slot'), face, false))
-      return 1
-    }).then(cmdRoot.literal('force').executes(ctx => {
-      c4Reply(ctx, c4ExpandFace(ctx.source.server, IAT.getInteger(ctx, 'slot'), face, true))
-      return 1
-    })))
-  })
-  root.then(expRoot.then(expSlot))
+  // 兼容旧入口：/cube admin expand <slot> <face> [force]（保留为别名，实现在 cw_expand.js）
+  root.then(cmdRoot.literal('expand').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0))
+      .then(cmdRoot.literal('py').executes(ctx => { c4CweExpand(ctx, 'py'); return 1 })
+        .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'py', true); return 1 })))
+      .then(cmdRoot.literal('px').executes(ctx => { c4CweExpand(ctx, 'px'); return 1 })
+        .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'px', true); return 1 })))
+      .then(cmdRoot.literal('nx').executes(ctx => { c4CweExpand(ctx, 'nx'); return 1 })
+        .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'nx', true); return 1 })))
+      .then(cmdRoot.literal('nz').executes(ctx => { c4CweExpand(ctx, 'nz'); return 1 })
+        .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'nz', true); return 1 })))
+      .then(cmdRoot.literal('pz').executes(ctx => { c4CweExpand(ctx, 'pz'); return 1 })
+        .then(cmdRoot.literal('force').executes(ctx => { c4CweExpand(ctx, 'pz', true); return 1 })))))
+
+  // /cube admin rebuild <slot>：按当前 cells 重算外边界（地板/框梁/屏障/灯），幂等自愈
+  root.then(cmdRoot.literal('rebuild').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => { c4CweRebuild(ctx); return 1 })))
 
   root.then(cmdRoot.literal('flush').requires(src => src.hasPermission(2)).executes(ctx => {
     C4_Q = []; C4_BUSY = null
@@ -2932,7 +2946,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
       console.info('[C4] down dest=' + dd.dim + ' @' + (Number(dd.x) + 0.5) + ',' + (Number(dd.y) + 0.5) + ',' + (Number(dd.z) + 0.5))
     }
   } catch (eDD) {}
-  // 3×3 洞不自动生成：搬家后保留已激活的那对门（要重建就 /cube admin hole）
+  // 3×3 洞不自动生成：搬家后保留玩家自己激活的那对门（要重建就 /cube admin hole）
   console.info('[C4] relocate 完成 slot=' + slot + ' 旧=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
     + ' → 新=' + bx2 + ',' + by2 + ',' + bz2 + ' 门=' + made + ' 旧门清=' + killed + ' link恢复=' + hadLink)
 }
@@ -3291,7 +3305,7 @@ function c4ShellFill(server, dimId, b, block) {
 
 // 与 17x17 同一套方块：地板 / 顶圈 / 四角立柱 / +z 操控台
 // clearMode：'all'  = 首次创建/重建，整块内腔清空；其它值 = 不清
-// oldExt 参数保留只为兼容旧调用点，已不再使用
+// oldExt 参数保留只为兼容旧调用点，已不再使用（扩建/拆除已改走 cw_expand.js 的格子模型）
 function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt, slot) {
   let b = c4RoomBox(cx, cy, cz, ext)
   // —— 越界防御（只报警 + 夹取核心 y，不中断流程）——
@@ -3321,7 +3335,7 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   }
   // 大尺寸房间整块 fill 会超过 32768 上限（49×17×49=40817）→ 命令静默失败、旧方块留在原地。
   // 按 8 格一层清，单条最大 49×8×49=19208。
-  // 这里只保留 'all'（首次创建/重建）。
+  // 扩建/拆除已改走 cw_expand.js 的格子模型；这里只保留 'all'（首次创建/重建）。
   // oldExt 参数保留只为兼容旧调用点，已不再使用。
   let mode = clearMode || 'all'
   if (mode === 'all') {
@@ -3364,13 +3378,10 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
     console.info('[BUILD] c4BtnPos=' + c4BtnPos(slot).x + ',' + c4BtnPos(slot).y + ',' + c4BtnPos(slot).z
       + ' → 面板=' + bpx + ',' + bpy + ',' + bpz + ' 按钮=' + bpx + ',' + bpy + ',' + (bpz - 1))
   }
-  // slot === -1：扩建重建用（这间房不是机器本体，不摆操控台/启动按钮）
-  if (slot !== -1) {
-    run(`setblock ${bpx} ${bpy} ${bpz} kubejs:warping_controls`)
-    run(`setblock ${bpx + 1} ${bpy} ${bpz} kubejs:warping_interface`)
-    run(`setblock ${bpx - 1} ${bpy} ${bpz} kubejs:warping_disc_drive`)
-    run(`setblock ${bpx} ${bpy} ${bpz - 1} kubejs:launch_button[facing=north]`)
-  }
+  run(`setblock ${bpx} ${bpy} ${bpz} kubejs:warping_controls`)
+  run(`setblock ${bpx + 1} ${bpy} ${bpz} kubejs:warping_interface`)
+  run(`setblock ${bpx - 1} ${bpy} ${bpz} kubejs:warping_disc_drive`)
+  run(`setblock ${bpx} ${bpy} ${bpz - 1} kubejs:launch_button[facing=north]`)
   // 隐形光源：不加的话房间里/透过门看到的目的地笼子是全黑的（看起来就像"门坏了"）
   run(`setblock ${FX} ${b.Y0 + 8} ${FZ} minecraft:light[level=15]`)
   // 排气孔（原包 17x17 的 warping_vent 位置，按当前尺寸换算到四个角附近）
@@ -3408,45 +3419,6 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   }
   return b
 }
-// ---------------------------------------------------------------------------- 基地扩建（模式一：按面 +16）
-// 移植自 81b29e7：cube.ext 记五个面各自的扩展级数，扩建 = ext+1 后整间房重铺一遍。
-// 已知缺陷（也正是被放弃的原因）：c4BuildRoom('all') 先 fill 空气再重建，
-// 基地里已经摆好的箱子/机器/掉落物会一起消失 —— 就是"扩建吃掉基地"的来源。
-// 实际采用的是模式二（cw_expand.js 的格子模型，只补新增格的外边界）。
-function c4ExpandFace(server, slot, face, force) {
-  const C4_EXT_FACES = ['px', 'nx', 'pz', 'nz', 'py']
-  if (C4_EXT_FACES.indexOf(face) < 0) return 'face 只接受 ' + C4_EXT_FACES.join('/')
-  let info = c4TeamOfSlot(slot)
-  let cube = info ? info.cube : null
-  if (!cube) return '槽位 ' + slot + ' 还没有基地'
-  let oldExt = c4Ext(cube)
-  let cur = { px: oldExt.px, nx: oldExt.nx, pz: oldExt.pz, nz: oldExt.nz, py: oldExt.py }
-  cur[face] = cur[face] + 1
-  let core = c4BaseCore(slot)
-  let b0 = c4RoomBox(core.x, core.y, core.z, oldExt)
-  let b1 = c4RoomBox(core.x, core.y, core.z, cur)
-  let inside = 0
-  try {
-    server.players.forEach(p => {
-      if (c4DimOf(p) !== 'minecraft:overworld') return
-      if (p.x >= b1.X0 && p.x <= b1.X1 + 1 && p.z >= b1.Z0 && p.z <= b1.Z1 + 1
-        && p.y >= b1.Y0 && p.y <= b1.Y1 + 1) inside++
-    })
-  } catch (e0) {}
-  if (inside > 0 && !force) return '基地里还有 ' + inside + ' 人：扩建会清空内部，确认请加 force'
-  cube.ext = cur
-  c4Save()
-  console.info('[C4] 扩建 slot=' + slot + ' face=' + face + ' ' + JSON.stringify(oldExt) + ' → ' + JSON.stringify(cur)
-    + ' 旧箱 X ' + b0.X0 + '..' + b0.X1 + ' / Y ' + b0.Y0 + '..' + b0.Y1
-    + ' 新箱 X ' + b1.X0 + '..' + b1.X1 + ' / Y ' + b1.Y0 + '..' + b1.Y1)
-  try { c4BuildRoom(server, 'minecraft:overworld', core.x, core.y, core.z, cur, false, 'all', oldExt, -1) }
-  catch (e1) { console.warn('[C4] 扩建重建失败: ' + e1); return '扩建失败: ' + e1 }
-  // 重铺地板会盖掉 3×3 洞，扩完补一次
-  try { c4ActivateHole(server, slot, null) } catch (e2) { console.warn('[C4] 扩建后重建 3×3 洞失败: ' + e2) }
-  return '扩建 ' + face + ' 完成 · 基地 ' + (17 + 16 * (cur.px + cur.nx)) + '×'
-    + (17 + 16 * (cur.pz + cur.nz)) + '×' + (17 + 16 * cur.py) + '（内部已清空）'
-}
-
 // 6 扇门：位置/尺寸都按当前 ext 算（矩形门）
 // 6 个门面的期望坐标/尺寸（扩展/校验/建门共用同一张表）
 // ext 感知的六面门面中心：一律由 c4RoomBox 推导（外壳外 0.51）
@@ -3844,6 +3816,9 @@ ServerEvents.loaded(event => {
   // 自检延后 20 tick，逐项隔离（任何一个通道失败都不影响其它）
   server.scheduleInTicks(20, () => { try { c4SelfTest(server) } catch (e) { console.warn('[C4] 自检外层异常: ' + e) } })
 })
+
+// ---------------------------------------------------------------------------- 扩展器 / 拆除器（实现在 cw_expand.js）
+function c4ExpandDeny(p, msg) { try { p.tell(Text.of('⟢ ' + msg)) } catch (e) {} }
 
 
 // 优先【搬门】而不是删了重建：保留 entity 与目的地，只改位置/尺寸
@@ -4514,3 +4489,34 @@ ServerEvents.tick(event => {
 
 // 聊天框只在失败时说话（见 c4WarpBody / perform 的 abort 分支）
 
+// ════════════════════════════════════════════════════════════════════════════
+// 脚本桥：cw_expand.js（后加载）通过 global.CWC 读这边的常量/数据/建造函数。
+//   · 只在函数体内部被调用（运行时），放在文件末尾即可
+//   · cw_expand.js 加载后填 global.CWE；本文件只通过它转调扩建命令
+//   · 禁止在 cw_expand.js 顶层解构（KubeJS 每个脚本是独立作用域）
+// ════════════════════════════════════════════════════════════════════════════
+global.CWC = {
+  // 常量
+  TELE_FLOOR: C4_TELE_FLOOR, BASE_FLOOR: C4_BASE_FLOOR, CORE_Y: C4_CORE_Y, CELL: 16,
+  // 数据
+  db: () => c4Db(), save: () => c4Save(), teamOfSlot: (s) => c4TeamOfSlot(s),
+  baseAnchor: (s) => c4BaseAnchor(s), baseCore: (s) => c4BaseCore(s),
+  teleAnchor: (s) => c4TeleAnchor(s), btnPos: (s) => c4BtnPos(s),
+  dimOf: (e) => c4DimOf(e), ext: (c) => c4Ext(c),
+  team: (p) => c4Team(p), teamKey: (t) => c4TeamKey(t), cubeOfTeam: (k) => c4CubeOfTeam(k),
+  name: (p) => c4Name(p),
+  // 建造
+  shellFill: (server, dim, box, block) => c4ShellFill(server, dim, box, block),
+  owLevel: (server) => c4OwLevel(server),
+  // 交互
+  activateHole: (server, slot, player) => c4ActivateHole(server, slot, player),
+  deactivateHole: (server, slot, player) => c4DeactivateHole(server, slot, player),
+  deny: (p, msg) => c4ExpandDeny(p, msg),
+  reply: (ctx, msg) => c4Reply(ctx, msg),
+  notify: (server, slot, msg) => { try { c4BarTeam(server, slot, msg) } catch (e) {} },
+  refreshDb: () => { C4_DB = null },
+  // 命令参数（cw_expand.js 的 cmdExpand/cmdRebuild 从 ctx 里读 slot）
+  slot: (ctx) => c4Iat().getInteger(ctx, 'slot'),
+  iat: (v) => c4Iat().integer(v),
+}
+global.CWE = null   // cw_expand.js 加载后填自己的 API
