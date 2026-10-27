@@ -3388,19 +3388,18 @@ function c4CmdDoors(ctx, slot) {
   let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 传送器固定 17³
   let tp = c4TeleCore(slot)
   let chunks = c4DoorPreload(server, ext0, tp)
-  // 只杀本台的门（portal 实体），绝不碰方块/别人的门/大厅门
+  // 清旧门：按【半径整片清】而不是按归属 tag。
+  // 为什么不用 tag 过滤：旧存档的门可能一个归属 tag 都没有（没有 cw_id_/cw_slot），
+  // 按 tag 匹配会全部漏掉 → 重建后变成"新旧门叠在一起"。槽位间距 4000，96 格内只可能是本台的门。
+  // 唯一保留的例外是 cw_lobby（出生点/大厅门），手册里写明所有 kill 逻辑都必须排除它。
   let killed = 0
   try {
-    c4All(server).forEach(e => {
-      try {
-        if (!c4IsPortal(e)) return
-        if (c4DimOf(e) !== 'minecraft:overworld') return
-        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
-        if (!(c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot))) return
-        e.discard(); killed++
-      } catch (err) {}
-    })
-  } catch (e1) {}
+    let k = Number(server.runCommandSilent('execute in minecraft:overworld positioned ' + tp.x + ' ' + tp.y + ' ' + tp.z
+      + ' run kill @e[type=immersive_portals:portal,distance=..96,tag=!cw_lobby]'))
+    if (!isNaN(k)) killed = k
+    console.info('[C4] doors slot=' + slot + '：半径 96 清门 ' + killed + ' 扇 @' + tp.x + ',' + tp.y + ',' + tp.z
+      + '（含无归属 tag 的旧门，已排除 cw_lobby）')
+  } catch (e1) { console.warn('[C4] doors 清旧门失败: ' + e1) }
   let made = 0
   try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e2) { console.warn('[C4] 造门失败: ' + e2) }
 
@@ -4115,7 +4114,9 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
   let box0 = c4RoomBox(cx, cy, cz, ext || { px: 0, nx: 0, pz: 0, nz: 0, py: 0 })
   // 门尺寸固定 17×17（不随 ext 变）：墙变大后门仍是墙中心那一块
   let span = C4_PORTAL_SPAN
-  server.runCommandSilent(`execute in minecraft:overworld positioned ${cx} ${cy} ${cz} run kill @e[type=immersive_portals:portal,distance=..128,tag=!cw_lobby,tag=!cw_link]`)
+  // 整片清：旧存档的门可能完全没有归属 tag，按 tag 过滤会漏 → 新旧门叠在一起。
+  // 3×3 链接（cw_link 系列）已整体废弃，也一并清掉；只保留 cw_lobby 出生点门。
+  server.runCommandSilent(`execute in minecraft:overworld positioned ${cx} ${cy} ${cz} run kill @e[type=immersive_portals:portal,distance=..128,tag=!cw_lobby]`)
   let t = 'c4rm' + slot + Date.now()
   let failed = []
   ;['y', '-y', 'x', '-x', 'z', '-z'].forEach(d => {
