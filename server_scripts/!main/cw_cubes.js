@@ -1024,7 +1024,7 @@ function c4MakeReverse(server, slot, dimId, dx, dy, dz, idName) {
 //   · 不再调用数据包 hexahedron:build_hexahedron/17x17（那条函数留给 slot0 出生大厅 / 起始笼子）
 //   · 不在这里放操控台/启动按钮：基地不承载跃迁机器（按钮在传送仓，c4StripCabin 也会再清一遍）
 // ════════════════════════════════════════════════════════════════════════════
-function c4BuildBaseBox(server, slot) {
+function c4BuildBaseBox(server, slot, useTmpl) {
   let a = c4BaseAnchor(slot)
   let X0 = a.x - 8, X1 = a.x + 8
   let Y0 = a.y, Y1 = a.y + 16          // 97 / 113
@@ -1042,7 +1042,7 @@ function c4BuildBaseBox(server, slot) {
   //   模板本身不含 barrier/structure_void/hexahedron_filling；放置前的 ① 已把 17³ 清成 air，
   //   模板失败则回退逐条 fill。
   let usedTmpl = false
-  try {
+  if (useTmpl === true) try {
     let tr = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_base17 '
       + X0 + ' ' + Y0 + ' ' + Z0))
     usedTmpl = tr > 0
@@ -1067,7 +1067,7 @@ function c4BuildBaseBox(server, slot) {
   })
   // ★ 管道模板（独立 5×20×5）：5×5 框梁 y 114..117、梯子 y 98..116、可拆石砖靠背 y 98..112；
   //   传送仓地板下一格（117）的 3×3 预封，扩建器建 3×3 门时会把它填 air 拆掉。
-  try {
+  if (useTmpl === true) try {
     let trP = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_pipe_ladder '
       + (X0 + 6) + ' ' + (Y0 + 1) + ' ' + (Z0 + 6)))
     if (trP > 0) console.info('[C4] 管道模板已放置 slot=' + slot + ' @' + (X0 + 6) + ',' + (Y0 + 1) + ',' + (Z0 + 6) + '（107 方块 / 1 条命令）')
@@ -1119,7 +1119,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   // 1) 基地本体：slot>=1 用新封闭盒（六面 warping_frame + 整面地板 platform + 天花板中央 3×3 洞）；
   //    slot 0（出生大厅）继续用原包 17x17（那条数据包函数只保留给大厅；起始笼子另见 CAGE 分支）
   if (Number(slot) >= 1) {
-    try { c4BuildBaseBox(server, slot) } catch (eBB) { console.warn('[C4] 基地封闭盒失败: ' + eBB) }
+    try { c4BuildBaseBox(server, slot, true) } catch (eBB) { console.warn('[C4] 基地封闭盒失败: ' + eBB) }
     // ★ 基地尺寸以 cells 为准（ext 转化后已废弃）：开荒/重置后按 cells 重建整个并集外壳，
     //   否则只会有原点 17³ 那一间，扩建过的基地看起来就“变小”了。
     try {
@@ -1208,7 +1208,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   server.scheduleInTicks(200, () => {
     try {
       let a = c4TeleAnchor(slot)
-      c4BuildTeleporter(server, slot, a)
+      c4BuildTeleporter(server, slot, a, true, true)
       let h2 = c4TeamOfSlot(slot)
       if (h2 && h2.cube) { h2.cube.tele = { x: a.x, y: a.y, z: a.z }; c4Save() }
       c4StripCabin(server, slot, true)
@@ -4268,7 +4268,7 @@ function c4DoorPreload(server, ext, core) {
   return n
 }
 // 建门统一入口：先全量预载 → 延后 ≥20t 再搬/建 → 10t 后按 face tag 校验，不足再补一轮
-function c4BuildTeleporter(server, slot, a, logIt) {
+function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
   let info = c4TeamOfSlot(slot)
   let idName = (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot)
   let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
@@ -4299,7 +4299,7 @@ function c4BuildTeleporter(server, slot, a, logIt) {
   // ★ 舱的 21³ 模板会把它下面 2 格（116/117）清成 air —— 正好是管道顶部和 117 的封堵层。
   //   默认布局（舱地板=118）下，把独立管道模板（含 117 的 3×3 封堵 + 梯子）在舱建完后再铺回来。
   try {
-    if (Math.floor(a.y) === Math.floor(C4_TELE_FLOOR)) {
+    if (useTmpl === true && Math.floor(a.y) === Math.floor(C4_TELE_FLOOR)) {
       let basP = c4BaseAnchor(slot)
       let bxP = Math.floor(basP.x + 0.5), bzP = Math.floor(basP.z + 0.5)
       let trP = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_pipe_ladder '
