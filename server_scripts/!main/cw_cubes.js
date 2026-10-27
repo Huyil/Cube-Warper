@@ -69,7 +69,7 @@ const C4_AUTO = {
   cleanStrayLinks: false,  // 启动时清 slot2..14 管道 3×3 → 默认关
   purgeLobby: false,       // 清出生大厅的门（函数里本来也 return 0）
   spawnOnLogin: false,     // 登录自动传送到立方体 → 默认关
-  spawnOnRespawn: true,    // 重生自动传送（用户要求开）
+  spawnOnRespawn: false,   // 重生自动传送：默认关闭（重生后再同步传送会导致黑屏/卡顿；需要时改回 true）
   selfTest: false,         // 自检（只读，但会 setIsVisible）→ 默认关
   chunkLoader: true        // 只 forceload/加载区块，不改方块
 }
@@ -1119,6 +1119,18 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   // 1) 基地本体：slot>=1 用新封闭盒（六面 warping_frame + 整面地板 platform + 天花板中央 3×3 洞）；
   //    slot 0（出生大厅）继续用原包 17x17（那条数据包函数只保留给大厅；起始笼子另见 CAGE 分支）
   if (Number(slot) >= 1) {
+    // ★ 新建立方体顺序：传送仓(21³ 模板) → 基地(17³) → 管道(5×20×5，强制替换)
+    //   舱的 2 格 air 留边会伸到 116/117，所以先建舱，后面基地/管道再盖上去。
+    try {
+      let aT = c4TeleAnchor(slot)
+      let tx0 = Math.floor(aT.x) - 10, ty0 = Math.floor(aT.y) - 2, tz0 = Math.floor(aT.z) - 10
+      server.runCommandSilent('execute in minecraft:overworld run fill ' + tx0 + ' ' + ty0 + ' ' + tz0
+        + ' ' + (tx0 + 20) + ' ' + (ty0 + 20) + ' ' + (tz0 + 20) + ' minecraft:air')
+      let trC = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter21 '
+        + tx0 + ' ' + ty0 + ' ' + tz0))
+      if (trC > 0) console.info('[C4] 传送仓模板先建 slot=' + slot + ' @' + tx0 + ',' + ty0 + ',' + tz0 + '（21³）')
+      else console.warn('[C4] 传送仓模板不可用 slot=' + slot)
+    } catch (eCab) { console.warn('[C4] 先建传送仓失败: ' + eCab) }
     try { c4BuildBaseBox(server, slot, true) } catch (eBB) { console.warn('[C4] 基地封闭盒失败: ' + eBB) }
     // ★ 基地尺寸以 cells 为准（ext 转化后已废弃）：开荒/重置后按 cells 重建整个并集外壳，
     //   否则只会有原点 17³ 那一间，扩建过的基地看起来就“变小”了。
@@ -1354,8 +1366,16 @@ function c4ApplyOp(o, seed) {
   return seed
 }
 function c4ReadSeed(server, slot) {
+  // 与原包 processor_calculation 一致：普通算子按 +1 → 0 → -1 顺序算，
+  // 特殊算子（eye = 999 / infinite = -999）在最后统一覆盖，不受所在槽位影响。
   let seed = 0
-  for (let i = 1; i >= -1; i--) seed = c4ApplyOp(c4OpAt(server, slot, i), seed)
+  let special = null
+  for (let i = 1; i >= -1; i--) {
+    let o = c4OpAt(server, slot, i)
+    if (o && (o.key === 'eye' || o.key === 'infinite')) { special = o; continue }
+    seed = c4ApplyOp(o, seed)
+  }
+  if (special) seed = c4ApplyOp(special, seed)
   return seed
 }
 
@@ -1776,26 +1796,38 @@ function c4WarpBody(server, job) {
   // 原包 runtime.mcfunction:21-23：+1 → 0 → -1，每格 1 秒；种子按消耗顺序逐格累加
   // （原包就是"读一格 → 结算 → 消耗"，倒计时期间被放进去的算子也会被算上）
   let seedAcc = 0
+  job._ops = {}
   server.scheduleInTicks(20, () => {
     if (C4_BUSY !== job) return
     try {
-      seedAcc = c4ApplyOp(c4OpAt(server, slot, 1), seedAcc)
+      job._ops[1] = c4OpAt(server, slot, 1)
       c4ConsumeSlot(server, slot, 1)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
   })
   server.scheduleInTicks(40, () => {
     if (C4_BUSY !== job) return
     try {
-      seedAcc = c4ApplyOp(c4OpAt(server, slot, 0), seedAcc)
+      job._ops[0] = c4OpAt(server, slot, 0)
       c4ConsumeSlot(server, slot, 0)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
   })
   server.scheduleInTicks(60, () => {
     if (C4_BUSY !== job) return
     try {
-      seedAcc = c4ApplyOp(c4OpAt(server, slot, -1), seedAcc)
+      job._ops[-1] = c4OpAt(server, slot, -1)
       c4ConsumeSlot(server, slot, -1)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+    // 与原包一致：普通算子按 1→0→-1 顺序算，eye/infinite 最后覆盖
+    try {
+      let acc = 0, sp = null
+      ;[1, 0, -1].forEach(i => {
+        let o = job._ops[i]
+        if (o && (o.key === 'eye' || o.key === 'infinite')) sp = o
+        else acc = c4ApplyOp(o, acc)
+      })
+      if (sp) acc = c4ApplyOp(sp, acc)
+      seedAcc = acc
+    } catch (eAcc) { seedAcc = 0 }
     // 倒计时期间插槽可能被改动：以 t=60 的最终 seed 为准，重选目的地（原包 t=85 才选维度）
     if (seedAcc !== d.seed) {
       console.warn('[C4] 槽位 ' + slot + ' 倒计时期间插槽被改动：seed ' + d.seed + ' → ' + seedAcc + '，按新 seed 重选目的地')
@@ -1909,6 +1941,21 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
       } else {
         console.info('[C4] 动画版 a 复用固定房间 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
       }
+      // ★ edge 维度：原包用全局记分板 lost_hex 只生成一次遗迹（全服第一次），之后进去什么都没有。
+      //   这里改成 KubeJS 按“目的地 = the_edge_of_reality”直接生成；幂等：遗迹中心格不是空气就跳过。
+      try {
+        if (String(d.dim) === 'hexahedron:the_edge_of_reality') {
+          let rx = Math.floor(d.x) - 8, ry = Math.floor(d.y) - 8, rz = Math.floor(d.z) + 60
+          let lvE = c4Level(server, d.dim)
+          let curE = lvE ? String(lvE.getBlock(rx + 8, ry + 8, rz + 8).id) : 'minecraft:air'
+          if (curE === 'minecraft:air') {
+            server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + rx + ' ' + ry + ' ' + rz)
+            console.info('[C4] edge 维度：生成 lost_hexahedron @' + rx + ',' + ry + ',' + rz + '（替代原包全局一次性）')
+          } else {
+            console.info('[C4] edge 维度：lost_hexahedron 已存在，跳过 @' + rx + ',' + ry + ',' + rz)
+          }
+        }
+      } catch (eRuin) { console.warn('[C4] lost_hexahedron 生成失败: ' + eRuin) }
 
       // b) 分步指门：从「上一处落点」lerp 到「新落点」，每段间隔 per tick
       //    （没有旧落点就用 600 格外的远方，视觉上等价于"从很远飞过来"）
