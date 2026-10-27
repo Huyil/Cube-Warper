@@ -3355,9 +3355,23 @@ function c4CmdTele(ctx, slot, floorY) {
     return
   }
   let oldA = c4TeleAnchor(slot)
+  let oldBtn = c4BtnPos(slot)
   let bx = Math.floor(c4CubeX(slot)), bz = Math.floor(C4_Z) + 7
   let by = fy + 1
   // ⓪ 清旧舱（17³）+ 旧链接门 + 旧玻璃
+  // ⚠ 旧锚点 y < 116 = 舱体压进基地（97..113）里，17³ 清空会把基地上半层/天花板一起铲掉。
+  //   这种情况只清旧按钮那一格，不清整舱；新舱照常在 fy 重建。
+  let oldSafe = oldA.y >= 116
+  if (!oldSafe) {
+    console.warn('[C4] tele slot=' + slot + ' 旧锚点 y=' + oldA.y + ' < 116（与基地重叠）→ 跳过整舱清空，只清旧按钮 @'
+      + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z)
+    try {
+      server.runCommandSilent('execute in minecraft:overworld if block ' + oldBtn.x + ' ' + oldBtn.y + ' ' + oldBtn.z
+        + ' kubejs:launch_button run setblock ' + oldBtn.x + ' ' + oldBtn.y + ' ' + oldBtn.z + ' minecraft:air')
+      server.runCommandSilent('execute in minecraft:overworld if block ' + oldBtn.x + ' ' + oldBtn.y + ' ' + oldBtn.z
+        + ' kubejs:launch_button_pressed run setblock ' + oldBtn.x + ' ' + oldBtn.y + ' ' + oldBtn.z + ' minecraft:air')
+    } catch (eOldBtn) {}
+  } else {
   try {
     server.runCommandSilent('execute in minecraft:overworld run fill ' + (oldA.x - 8) + ' ' + oldA.y + ' ' + (oldA.z - 8)
       + ' ' + (oldA.x + 8) + ' ' + (oldA.y + 16) + ' ' + (oldA.z + 8) + ' minecraft:air')
@@ -3370,6 +3384,7 @@ function c4CmdTele(ctx, slot, floorY) {
       + ' run kill @e[type=immersive_portals:portal,distance=..128,tag=!cw_lobby,tag=!cw_link]')
     console.info('[C4] tele 清旧舱 @' + oldA.x + ',' + oldA.y + ',' + oldA.z + '（按归属+' + 128 + '格；discard=' + kd + '）')
   } catch (e0) {}
+  }
   // ① 换绑 + 落库
   h.cube.btn = { x: bx, y: by, z: bz }
   h.cube.tele = { x: bx, y: by - 1, z: bz - 7 }
