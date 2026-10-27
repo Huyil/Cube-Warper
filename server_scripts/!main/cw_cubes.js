@@ -2435,6 +2435,14 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
   if (by === C4_BASE_FLOOR + 1 && bz === (Math.floor(C4_Z) + 7)) {
     let ts = c4TeamOfSlot(slot)
     if (ts) {
+      // 一次性闸：按钮锚点已经是新布局（y>=116）就不再重复迁移；
+      // 旧布局/坏记录（例如 106）才允许这一次重建。
+      let curBtnY = (ts.cube && ts.cube.btn) ? Number(ts.cube.btn.y) : NaN
+      if (isFinite(curBtnY) && curBtnY >= 116) {
+        console.info('[C4] 基地重建按钮 slot=' + slot + '：已重建过（btn.y=' + curBtnY + '），忽略本次')
+        try { clicker.tell(Text.of('⟢ 这台已经重建过（按钮 y=' + curBtnY + '），不会重复执行；要强制重建请用 /cube admin tele ' + slot + ' 118')) } catch (eG) {}
+        return
+      }
       let nx = Math.floor(c4CubeX(slot)), ny = C4_TELE_FLOOR + 1, nz = Math.floor(C4_Z) + 7
       console.info('[C4] 旧存档按钮迁移 slot' + slot + '：' + bx + ',' + by + ',' + bz + ' → ' + nx + ',' + ny + ',' + nz)
       try {
