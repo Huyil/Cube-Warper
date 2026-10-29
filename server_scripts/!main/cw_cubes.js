@@ -74,9 +74,9 @@ const C4_AUTO = {
   chunkLoader: true        // 只 forceload/加载区块，不改方块
 }
 const C4_PORTAL_SPAN = 15.0
-// 剧场版时序：t=80 先指门 → 等这么多 tick（黑场：旅行音 + 三次排气）→ 再建目的地房间
-const C4_PLANE_WAIT = 140   // 黑场窗口 = 140t（7s）：原包临界值是「指门后 ~78t 客户端才卸完旧世界」，
-                            // 这里留 140t 余量，专门防客户端 ClientWorldLoader 并发崩溃；想更保险可加到 200
+// 剧场版时序：t=80 先指门 → 等这么多 tick（黑场：旅行音）→ 再建目的地房间
+const C4_PLANE_WAIT = 80   // 黑场窗口 = 80t（4s）：实测客户端 ~78t 才卸完旧世界，取 80 兜底
+                            // （2026-10-29 从 140 缩短：维度加载完后动画播太久；排气已挪到 t=20/40/60 算子消耗时同步喷）
 
 // ⚠ KubeJS 的 Rhino 里 Math.PI / Math.E 是 undefined（Math 只有方法，没有常量）→ 必须用字面量。
 // 以前 c4Seat 里写 Math.PI：a 算出 NaN → 座位 x/z 全 NaN → 玩家被传到 (NaN,NaN)。
@@ -1847,6 +1847,7 @@ function c4WarpBody(server, job) {
     try {
       job._ops[1] = c4OpAt(server, slot, 1)
       c4ConsumeSlot(server, slot, 1)
+      c4VentBurst(server, slot)   // 排气与算子消耗同步（原在 perform 内 +10/30/50，维度加载完才喷太晚）
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
   })
   server.scheduleInTicks(40, () => {
@@ -1854,6 +1855,7 @@ function c4WarpBody(server, job) {
     try {
       job._ops[0] = c4OpAt(server, slot, 0)
       c4ConsumeSlot(server, slot, 0)
+      c4VentBurst(server, slot)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
   })
   server.scheduleInTicks(60, () => {
@@ -1861,6 +1863,7 @@ function c4WarpBody(server, job) {
     try {
       job._ops[-1] = c4OpAt(server, slot, -1)
       c4ConsumeSlot(server, slot, -1)
+      c4VentBurst(server, slot)
     } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
     // 与原包一致：普通算子按 1→0→-1 顺序算，eye/infinite 最后覆盖
     try {
@@ -1893,26 +1896,7 @@ function c4WarpBody(server, job) {
   console.info('[C4] 槽位 ' + slot + ' 自主跃迁 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
 
 // 成功收尾：写 dests/curDestDim、记 job.dest、日志、10t 后 c4WarpEnd
-// 落点纠偏：玩家若不在房间 box（±9）内，直接 tp 到中心上方 2 格
-function c4CorrectLanding(server, slot, job, d) {
-  try {
-    let cx = Number(d.x) + 0.5, cz = Number(d.z) + 0.5, cy = Number(d.y) + 0.5
-    if (!job || !job.riders || job.riders.length === 0) return
-    server.players.forEach(p => {
-      try {
-        if (job.riders.indexOf(c4Name(p)) < 0) return
-        if (c4DimOf(p) !== String(d.dim)) return
-        let inside = Math.abs(p.x - cx) <= 9 && Math.abs(p.z - cz) <= 9 && p.y >= cy - 9 && p.y <= cy + 10
-        if (inside) return
-        console.info('[C4] 落点纠偏：玩家在房间外 → tp 回中心 ' + c4Name(p)
-          + ' (' + Math.floor(p.x) + ',' + Math.floor(p.y) + ',' + Math.floor(p.z) + ') → '
-          + Math.floor(cx) + ',' + Math.floor(cy + 2) + ',' + Math.floor(cz))
-        c4Tp(server, p, d.dim, cx, cy + 2, cz)
-      } catch (e) {}
-    })
-  } catch (e2) { console.warn('[C4] 落点纠偏异常: ' + e2) }
-}
-
+// （原 c4CorrectLanding「玩家不在房间 ±9 格内 tp 回中心」已于 2026-10-29 按需求删除）
 function c4FinishWarp(server, slot, label, job, info, d, idName) {
   try {
     if (!job.tempDest && info && info.cube) {
@@ -1927,8 +1911,6 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
   // 隧道打开时，目的地房间不该有反向 down 门（舱底是洞）→ 到站后顺手清掉
   try { if (c4HoleOpen(slot)) c4KillReverseDowns(server, slot) } catch (eRD) {}
   console.info('[C4] 剧场版 e 校验通过 → 跃迁完成 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
-  server.scheduleInTicks(30, () => c4CorrectLanding(server, slot, job, d))
-  server.scheduleInTicks(100, () => c4CorrectLanding(server, slot, job, d))
   server.scheduleInTicks(10, () => c4WarpEnd(server, slot, label, job))
 }
 
@@ -2039,12 +2021,8 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
       }
       console.info('[C4] 动画版 b ' + steps + ' 段指门（每段 ' + per + 't，共 ' + (steps * per) + 't）');
 
-      // c) 旅行音 + 三波排气（与镜头同步）
+      // c) 旅行音（排气三连已挪到 t=20/40/60 算子消耗时刻，与加载向量运算符同步）
       c4TravelSounds(server, atCore)
-      ;[10, 30, 50].forEach(t => server.scheduleInTicks(t, () => {
-        if (C4_BUSY !== job) return
-        c4VentBurst(server, slot)
-      }))
 
       // d/e) 动画跑完 → 最后精确指一次 → 反向门 → 校验（失败仍回滚私有笼子）
       server.scheduleInTicks(C4_PLANE_WAIT, () => {
@@ -2189,25 +2167,8 @@ function c4WarpEnd(server, slot, label, job) {
   server.runCommandSilent(`tag @e[type=marker,tag=cw_slot${slot}] remove pre_runtime`)
   server.runCommandSilent(`scoreboard players set @e[type=marker,tag=cw_slot${slot}] pre_runtime 0`)
   server.runCommandSilent(`scoreboard players set @e[type=marker,tag=cw_slot${slot}] dimension_seed 0`)
-  // 防延迟丢人：只把【仍在舱体范围内】的登船者按回座位（同维度 + 按 ext 真实 box 判 ±10 容差）。
-  // 以前无条件对 job.riders 全员 c4SendToCube：已经走出舱体、甚至去了别的维度的人会被硬拉回主世界。
-  try {
-    if (job && job.riders && job.riders.length > 0) {
-      let hs = c4TeamOfSlot(slot)
-      let extNow = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 传送器固定 17³（基地 ext 不参与）
-      let ps = []
-      let left = 0
-      server.players.forEach(p => {
-        if (job.riders.indexOf(c4Name(p)) < 0) return
-        if (!c4InCubeExt(p, slot, extNow, 10)) { left++; return }   // 已走出舱体/在别的维度：不动他
-        if (c4InCubeExt(p, slot, extNow, 0)) return                  // 人就在舱内：也不用折腾
-        ps.push(p)
-      })
-      let n = ps.length > 0 ? c4SendToCube(server, ps, slot) : 0
-      if (n > 0) console.info('[C4] 收尾：把 ' + n + ' 人拉回舱内（登船 ' + job.riders.length + ' 人，' + left + ' 人已离开舱体不处理）')
-      else if (left > 0) console.info('[C4] 收尾：登船 ' + job.riders.length + ' 人，' + left + ' 人已离开舱体，不召回')
-    }
-  } catch (e) { console.warn('[C4] 收尾复位失败: ' + e) }
+  // 防延迟丢人的「把登船者拉回舱内座位」（c4SendToCube）已于 2026-10-29 按需求删除：
+  // 跃迁结束后不再强行 tp 玩家到传送器座位，站哪算哪。
 
   // 清掉本次残留的 outer_core
   try { c4PurgeOuterCores(server) } catch (e) {}
