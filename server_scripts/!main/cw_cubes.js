@@ -2759,6 +2759,11 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   // /cwp spawn · /cube spawn：回到出生点（基岩 0,0 的出生笼子）
   root.then(cmdRoot.literal('spawn').executes(ctx => { c4CmdSpawn(ctx); return 1 }))
 
+  // /cube holeme：玩家自助切换自家传送仓的 3×3 隧道（无权限门槛；校验执行者队伍已绑定槽位）
+  root.then(cmdRoot.literal('holeme').executes(ctx => { c4CmdHoleMe(ctx, true); return 1 }))
+  // /cube unholeme：对称命令——只还原不打开（隧道本就关闭时仅提示，不动结构）
+  root.then(cmdRoot.literal('unholeme').executes(ctx => { c4CmdHoleMe(ctx, false); return 1 }))
+
   // 管理命令统一挂到 /cube admin（权限 4）；root 重新指向 admin 后，
   // 下面所有 root.then(...) 都会注册到 admin 子树里。
   let cubeRoot = root
@@ -3069,6 +3074,26 @@ function c4CmdHomeSlot(ctx, slot) {
   let s = c4HomeSeat(slot)
   if (c4Tp(ctx.source.server, p, 'minecraft:overworld', s.x, s.y, s.z)) c4ReplyT(ctx, 'cw.cmd.tp_ok', [])
   else c4ReplyT(ctx, 'cw.cmd.tp_fail')
+}
+
+// /cube holeme · /cube unholeme：玩家自助开关自家传送仓隧道（toggle=true 切换，false 只还原）
+// 校验链与 /cube home 一致：FTB Teams → 队伍 → c4CubeOfTeam(key) 槽位绑定；通过后委托 c4ToggleHole
+function c4CmdHoleMe(ctx, toggle) {
+  let p = c4SrcPlayer(ctx)
+  if (!p) { c4ReplyT(ctx, 'cw.cmd.need_player'); return 0 }
+  if (!c4Ftb().ok) { c4Reply(ctx, '队伍系统（FTB Teams）未接入，无法使用该命令'); return 0 }
+  let t = c4Team(p)
+  if (!t) { c4Reply(ctx, '你还没有队伍（先创建或加入一支队伍，入仓后才会绑定槽位）'); return 0 }
+  let key = c4TeamKey(t)
+  let cube = key ? c4CubeOfTeam(key) : null
+  if (!cube) { c4Reply(ctx, '你的队伍《' + c4TeamLabel(t) + '》还没有绑定的传送仓槽位'); return 0 }
+  let slot = Number(cube.slot)
+  if (!toggle && !c4HoleOpen(slot)) { c4Reply(ctx, '槽位 ' + slot + ' 的隧道已经是关闭状态'); return 0 }
+  console.info('[C4] holeme：' + p.name + '（队伍 ' + c4TeamLabel(t) + '，slot=' + slot + '）' + (toggle ? '切换隧道' : '还原隧道'))
+  let r = c4ToggleHole(ctx.source.server, slot, p)
+  if (!r) { c4Reply(ctx, '隧道操作失败（slot ' + slot + '），请联系管理员'); return 0 }
+  c4Reply(ctx, (toggle ? '已切换' : '已还原') + '槽位 ' + slot + ' 的传送仓隧道（holeOpen=' + (c4HoleOpen(slot) ? '开' : '关') + '）')
+  return 1
 }
 
 // —— flag=2（UPDATE_CLIENTS）逐块放置：不触发邻接更新，海底砌壳/清内不会倒灌 ——
