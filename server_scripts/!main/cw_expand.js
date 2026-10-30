@@ -86,7 +86,6 @@ function c4EnsureCells(cube) {
       set[c4CellKey(gx, 0, gz)] = 1
   cube.cells = Object.keys(set)
   try { if (C && C.save) C.save() } catch (e0) {}
-  console.info('[C4] 旧 ext 展开成 cells：slot=' + cube.slot + ' → ' + cube.cells.length + ' 格（' + cube.cells.join(' | ') + '）')
   return cube.cells
 }
 function c4RebuildCells(server, cube) {
@@ -192,8 +191,6 @@ function c4RebuildCells(server, cube) {
     }
     stamped++
   })
-  console.info('[C4] 格子重建 slot=' + slot + ' cells=' + keys.join(' | ')
-    + '（封闭立方体×' + stamped + '，无 barrier/structure_void/filling）')
   return keys.length
 }
 // ── 目标格空气检查 ───────────────────────────────────────────────────────────
@@ -392,7 +389,6 @@ function c4AddCell(server, cube, dir, player, force) {
     try {
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (b.X0 + 1) + ' ' + (b.Y0 + 1) + ' ' + (b.Z0 + 1)
         + ' ' + (b.X1 - 1) + ' ' + (b.Y1 - 1) + ' ' + (b.Z1 - 1) + ' minecraft:air')
-      console.info('[C4] 向下扩建挖空内部 slot=' + slot + ' cell=' + key + ' y ' + (b.Y0 + 1) + '..' + (b.Y1 - 1))
     } catch (eDig) { console.warn('[C4] 向下扩建挖空失败: ' + eDig) }
   }
   // ⑤ 清掉新格里的旧外壳/旧版填充（只动这两种方块；模板本身不含不可见方块）
@@ -430,7 +426,6 @@ function c4ClearInnerVoid(server, cube) {
     n += run('fill ' + b.X0 + ' ' + y + ' ' + b.Z0 + ' ' + b.X1 + ' ' + y2 + ' ' + b.Z1
       + ' minecraft:air replace minecraft:structure_void')
   }
-  if (n > 0) console.info('[C4] 清理内部结构空位 slot=' + slot + '：' + n + ' 格')
   return n
 }
 
@@ -483,8 +478,6 @@ function c4AutoExpandForBorderItems(server, cube) {
       if (!hit) return
       set[nk] = 1
       added.push(nk)
-      console.info('[C4] 旧存档边框升级 slot=' + slot + ' ' + dd[0] + '：边框有 ' + hit.id + ' @'
-        + hit.x + ',' + hit.y + ',' + hit.z + ' → 免费扩 1 格 (' + nk + ')')
     })
   })
   if (added.length) {
@@ -513,8 +506,6 @@ function c4MigrateExtToCells(server, cube) {
   let n = cube.cells.length
   cube.ext = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 旧字段归零（仅作兼容占位）
   C.save()
-  console.info('[C4] 旧存档迁移 slot=' + cube.slot + ' ext=' + JSON.stringify(ext)
-    + ' → cells=' + n + ' 格' + (adopt ? '（沿用已有 cells）' : ''))
 
   let slot0 = Number(cube.slot)
   // forceload 是异步生效的：先申请常加载，留 40t 再重建，避免 fill 静默失败（屏障/地板没刷上）
