@@ -105,8 +105,7 @@ function c4RebuildCells(server, cube) {
     LEGACY.forEach(t => run('fill ' + x0 + ' ' + y0 + ' ' + z0 + ' ' + x1 + ' ' + y1 + ' ' + z1 + ' minecraft:air replace ' + t))
   }
   let u = c4CellUnion(slot, keys)
-  // 先把并集范围 forceload（否则超出范围的 fill 会静默失败）
-  try { run('forceload add ' + (u.X0 - 16) + ' ' + (u.Z0 - 16) + ' ' + (u.X1 + 16) + ' ' + (u.Z1 + 16)) } catch (eFL) {}
+  // 不做任何区块加载：用扩展器的人本人就在基地里（区块已加载），基地常加载由 FTB Chunks 负责
   // 并集外再扩 2 格，把旧版外壳留在房间外面的屏障/结构空位/正方体一并清掉（分片，避免 fill 超 32768）
   try {
     let ex = 2
@@ -333,7 +332,7 @@ function c4ClearRemovedCell(server, b, set2) {
   run('fill ' + b.X0 + ' ' + (b.Y0 - 1) + ' ' + b.Z0 + ' ' + b.X1 + ' ' + (b.Y0 - 1) + ' ' + b.Z1 + ' minecraft:air replace minecraft:structure_void')
 }
 
-// 加一格：先验空/扣物品，再 forceload、打通共享边框、清旧壳，最后重建外边界
+// 加一格：先验空/扣物品，再打通共享边框、清旧壳，最后重建外边界
 function c4AddCell(server, cube, dir, player, force) {
   let C = c4Cwc()
   if (!C || !cube) return { ok: false, reason: 'error' }
@@ -371,10 +370,7 @@ function c4AddCell(server, cube, dir, player, force) {
     }
   }
   // ② 扩建不再检查/消耗扩展器物品（按需求忽略物品检测）
-  // ③ 只 forceload，不再清空整格（目标格已验空）
-  try {
-    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (b.X0 - 16) + ' ' + (b.Z0 - 16) + ' ' + (b.X1 + 16) + ' ' + (b.Z1 + 16))
-  } catch (eFL2) {}
+  // ③ 不加载区块、不再清空整格（目标格已验空）：玩家就在基地里，区块是热
   // ④ 打通共享边框那一层（旧格的外墙）
   try {
     if (dir === 'px') server.runCommandSilent('execute in minecraft:overworld run fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X0 + ' ' + b.Y1 + ' ' + b.Z1 + ' minecraft:air')
@@ -508,12 +504,7 @@ function c4MigrateExtToCells(server, cube) {
   C.save()
 
   let slot0 = Number(cube.slot)
-  // forceload 是异步生效的：先申请常加载，留 40t 再重建，避免 fill 静默失败（屏障/地板没刷上）
-  try {
-    let u = c4CellUnion(slot0, cube.cells)
-    server.runCommandSilent('execute in minecraft:overworld run forceload add '
-      + (u.X0 - 16) + ' ' + (u.Z0 - 16) + ' ' + (u.X1 + 16) + ' ' + (u.Z1 + 16))
-  } catch (eFL) {}
+  // 不做区块加载：扩建/重建都由玩家在现场触发，区块已加载；基地常加载交给 FTB Chunks
   server.scheduleInTicks(40, () => {
     try {
       let C2 = c4Cwc()
@@ -684,11 +675,7 @@ function c4CmdBorderFix(ctx) {
   if (!info || !info.cube) { C.reply(ctx, '槽位 ' + slot + ' 没有登记'); return 0 }
   let cube = info.cube
   if (!cube.cells || !cube.cells.length) { C.reply(ctx, '槽位 ' + slot + ' 还没有格子数据'); return 0 }
-  try {
-    let u = c4CellUnion(slot, c4Cells(cube))
-    server.runCommandSilent('execute in minecraft:overworld run forceload add '
-      + (u.X0 - 16) + ' ' + (u.Z0 - 16) + ' ' + (u.X1 + 16) + ' ' + (u.Z1 + 16))
-  } catch (eFL) {}
+  // 不做区块加载（命令需要玩家在场；基地常加载交给 FTB Chunks）
   C.reply(ctx, '边框升级 slot' + slot + '：检查中（40t 后重建）')
   server.scheduleInTicks(40, () => {
     try {

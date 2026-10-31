@@ -21,6 +21,8 @@
   "cw.cmd.usage": "⟢ 用法：%s",
   "cw.effect.generating_world": "正在生成世界,请稍候……",
   "cw.effect.non_player_joined": "非玩家角色加入了游戏",
+  "cw.home.base_fail": "⟢ 回基地失败 · 联络管理员",
+  "cw.home.base_ok": "⟢ 已回到《%s》基地",
   "cw.home.fail": "⟢ 返航失败 · 联络管理员",
   "cw.home.hint": "  建队：/ftbteams party create <英文名>",
   "cw.home.no_cube": "⟢ 《%s》尚未配属基地 · 去中央配给台",

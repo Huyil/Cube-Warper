@@ -21,6 +21,8 @@
   "cw.cmd.usage": "⟢ Usage: %s",
   "cw.effect.generating_world": "Generating world, please hold...",
   "cw.effect.non_player_joined": "Non-Player joined the game",
+  "cw.home.base_fail": "⟢ Return to base failed · contact an operator",
+  "cw.home.base_ok": "⟢ Returned to %s base",
   "cw.home.fail": "⟢ Return failed · contact an operator",
   "cw.home.hint": "  Create a team: /ftbteams party create <name>",
   "cw.home.no_cube": "⟢ %s has no base yet · visit the central pedestal",

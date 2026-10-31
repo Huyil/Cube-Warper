@@ -71,7 +71,7 @@ const C4_AUTO = {
   spawnOnLogin: false,     // 登录自动传送到立方体 → 默认关
   spawnOnRespawn: false,   // 重生自动传送：默认关闭（重生后再同步传送会导致黑屏/卡顿；需要时改回 true）
   selfTest: false,         // 自检（只读，但会 setIsVisible）→ 默认关
-  chunkLoader: true        // 只 forceload/加载区块，不改方块
+  chunkLoader: false       // 2026-10：不再按登记表重挂常加载（交给 FTB Chunks）；字段保留仅为兼容
 }
 const C4_PORTAL_SPAN = 15.0
 // 剧场版时序：t=80 先指门 → 等这么多 tick（黑场：旅行音）→ 再建目的地房间
@@ -620,20 +620,51 @@ function c4SaveState() {
   try { JsonIO.write(C4_STATE_PATH, { worldStarted: C4_STATE.worldStarted, savedAt: Date.now() }) } catch (e) {}
 }
 
-// ---------------------------------------------------------------------------- 区块加载（API，替代 forceload）
+// ---------------------------------------------------------------------------- 区块加载（瞬时预载）
 let C4_CL_OK = null      // null=未知 true=可用 false=不可用
 function c4ChunkLoader(server, slot) {
   // IP 3.0.7 的 PortalAPI 没有 addGlobalChunkLoader（只有 addChunkLoaderForPlayer），
-  // 我们的 cube 区域统一用 forceload（c4ForceloadBox），这里不再尝试 IP 的全局 ChunkLoader。
-  // 保留函数名以兼容旧调用点；返回 false 表示"用 forceload"。
+  // 且脚本不再做任何常驻加载（队伍常加载交给 FTB Chunks）。保留函数名兼容旧调用点。
   return false
 }
 
-function c4ForceloadBox(slot, add) {
-  let x = c4CubeX(slot)
-  let x0 = Math.floor((x - 16) / 16) * 16, x1 = Math.floor((x + 16) / 16) * 16 + 15
-  let z0 = Math.floor((C4_Z - 16) / 16) * 16, z1 = Math.floor((C4_Z + 16) / 16) * 16 + 15
-  return `forceload ${add ? 'add' : 'remove'} ${x0} ${z0} ${x1} ${z1}`
+// ★ 2026-10 起【唯一】允许的区块加载方式：瞬时预载 + 同矩形自动释放。
+// 语义：forceload add 矩形 → ttl tick 后 forceload remove【同一矩形】；带世代守卫（旧世代不 remove）。
+// 绝不用于"基地常驻"：队伍常加载交给 FTB Chunks，脚本只在"建/搬/改门、建房间、让 IP 生成反向门"
+// 这几秒里需要区块已经进内存。任何新增的 forceload 都必须走这里，禁止裸 forceload add。
+// 同一矩形可能被多条链路先后预载（例：同队连续两次跃迁、建门链 + 跃迁链重叠）。
+// forceload 是按区块集合记的、没有引用计数 → 先到期的那个 remove 会把后者还在用的区块一起卸掉。
+// 这里用"最新序号"兜底：只有登记序号仍是自己的那次才真正 remove。
+let C4_PRELOAD_SEQ = {}
+function c4PreloadBox(server, dim, x0, z0, x1, z1, ttl, tag) {
+  let d = dim ? String(dim) : 'minecraft:overworld'
+  let ax = Math.min(Number(x0), Number(x1)) | 0, az = Math.min(Number(z0), Number(z1)) | 0
+  let bx = Math.max(Number(x0), Number(x1)) | 0, bz = Math.max(Number(z0), Number(z1)) | 0
+  let t = (ttl === undefined || ttl === null) ? 200 : Math.max(20, Number(ttl) | 0)
+  let g = C4_GEN
+  let key = d + ':' + ax + ',' + az + ',' + bx + ',' + bz
+  let seq = (Number(C4_PRELOAD_SEQ[key]) || 0) + 1
+  C4_PRELOAD_SEQ[key] = seq
+  let n = (Math.floor((bx - ax) / 16) + 1) * (Math.floor((bz - az) / 16) + 1)
+  try { server.runCommandSilent('execute in ' + d + ' run forceload add ' + ax + ' ' + az + ' ' + bx + ' ' + bz) }
+  catch (e) { console.warn('[C4] 预载失败 ' + (tag || '') + ': ' + e) }
+  try {
+    server.scheduleInTicks(t, () => {
+      if (g !== C4_GEN) return   // 旧世代不 remove：避免 reload 后误删新世代刚加的
+      if (Number(C4_PRELOAD_SEQ[key]) !== seq) return   // 同一矩形有更新的预载还在用 → 交给它释放
+      try { delete C4_PRELOAD_SEQ[key] } catch (eD) {}
+      try { server.runCommandSilent('execute in ' + d + ' run forceload remove ' + ax + ' ' + az + ' ' + bx + ' ' + bz) }
+      catch (e2) { console.warn('[C4] 预载释放失败 ' + (tag || '') + ': ' + e2) }
+    })
+  } catch (e3) { console.warn('[C4] 预载定时失败 ' + (tag || '') + ': ' + e3) }
+  return n
+}
+// 5×5 区块瞬时预载：以 (x,z) 所在区块为中心（cx-2..cx+2 / cz-2..cz+2）→ 25 区块，
+// ttl 默认 200t 后自动 forceload remove 同一矩形。门最多压 2×2 区块，3×3 在边界/扩展格上可能漏，5×5 更稳。
+function c4PreloadNear(server, dim, x, z, ttl, tag) {
+  let cx = Math.floor(Number(x) / 16), cz = Math.floor(Number(z) / 16)
+  if (!isFinite(cx) || !isFinite(cz)) return 0
+  return c4PreloadBox(server, dim, (cx - 2) * 16, (cz - 2) * 16, (cx + 2) * 16 + 15, (cz + 2) * 16 + 15, ttl, tag)
 }
 
 // ---------------------------------------------------------------------------- 门操作（v4 核心）
@@ -745,7 +776,7 @@ function c4PreloadFinal(server, slot, job) {
   let by = (outer ? Number(outer.y) : job.destPlan.y) - 5
   let bz = (outer ? Number(outer.z) : job.destPlan.z + 0.5)   // 17x17 的构建基准 = 核心 - 5
   let cx = Math.floor(x / 16) * 16, cz = Math.floor(z / 16) * 16
-  server.runCommandSilent('execute in ' + dimId + ' run forceload add ' + (x - 16) + ' ' + (z - 16) + ' ' + (x + 16) + ' ' + (z + 16))
+  c4PreloadNear(server, dimId, x, z, 600, 'dest-final')
   // 补建一次笼子（幂等；数据包那次大概率因为区块没加载而全部失败）
   server.scheduleInTicks(2, () => {
     try {
@@ -847,16 +878,11 @@ function c4Seat(slot, i, n) {
 }
 // 家（/cube home）落点：传送器按钮正前方 3 格、离地 1 格（脚踩地板，y = 地板方块 +1）。
 // 按钮统一 facing=north（各处 setblock 都是 north），玩家按它时站在 -z 一侧 → 「前方」= -z。
-// 用按钮派生而不是基地锚点：传送器搬走（旧存档迁移 / relocate / tele）后自动跟着走。
-// 没登记 btn 的（旧存档还没按按钮迁移的 13 台）保持原行为回基地，避免把人丢进还没建好的 y=10 空腔。
+// ★ 2026-10：永远由 c4BtnPos 派生 —— 它内部已有 cube.tele 兜底（y = tele.y+1 = 119）。
+//   以前"没 btn 就回基地"是 bug 来源：线上 16 台 btn 全为 null，于是 /cube home 把人塞进 17³ 内腔。
 function c4HomeSeat(slot) {
-  let h = null
-  try { h = c4TeamOfSlot(slot) } catch (e) { h = null }
-  let b = h && h.cube && h.cube.btn
-  if (!b || b.x === undefined || b.y === undefined || b.z === undefined) return c4BaseSeat(slot, 0, 1)
   let bp = c4BtnPos(slot)
-  // 落点 = 按钮正前方 3 格、按钮上方 1 格（按钮 119 → 4008.5,120,4.0）
-  return { x: bp.x + 0.5, y: bp.y + 1.0, z: bp.z - 3.0 }
+  return { x: bp.x + 0.5, y: bp.y + 1.0, z: bp.z - 3.0 }   // 按钮正前方 3 格、按钮上方 1 格（脚踩舱内地板）
 }
 function c4BaseSeat(slot, i, n) {
   let a = c4BaseAnchor(slot)
@@ -943,9 +969,9 @@ function c4ProvisionOnThread(server, slot, teamName, idName) {
     }
   } catch (e) {}
   console.info('[C4] 建造槽位 ' + slot + ' @ x=' + x + ' id=' + idName)
-  // 永久强制加载：server.entities 只枚举"已加载区块"里的实体，远端立方体一旦卸载，
-  // 之后所有 /cwp、!cube 的实体查询都会"找不到核心"。每台只占 2×2 区块。
-  server.runCommandSilent(c4ForceloadBox(slot, true))
+  // 瞬时预载 3×3（覆盖 20t 后建主体 + 200t 后建传送器 + 反向门）：建完就自动释放，不常驻。
+  // 队伍常加载交给 FTB Chunks；脚本不再为任何基地保留 forceload。
+  c4PreloadNear(server, 'minecraft:overworld', x, C4_Z, 1200, 'provision slot' + slot)
   // forceload 是异步的：2 tick 时区块往往还没进内存，fill / summon marker 会全部落空
   // （第一次见到就是"造门 = 0 扇"、立方体整块没生成）。等 1 秒再建。
   server.scheduleInTicks(20, () => {
@@ -1222,11 +1248,11 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       try { p.entity.addTag('cw_id_' + idName) } catch (e) {}
     })
     // 起点：每台立方体在【自己的 x 位置、基岩维度】有一间私有笼子，构造与出生点 0,0 那间完全一致。
-    // 先把 3×3 区块常加载（fill 才不会落空），2 tick 后建笼子，然后把 6 扇门指过去并让 IP 生成反向门。
+    // 瞬时预载 3×3（fill 才不会落空），建完笼子/反向门后自动释放 —— 不常驻。
     const CAGE = 'hexahedron:bedrock_bottom'
     // forceload 只吃整数坐标：MX/MZ 是 x+0.5，直接拼会解析失败（整块笼子因此没加载、也没建出来）
     let fx = Math.floor(MX), fz = Math.floor(MZ)
-    server.runCommandSilent('execute in ' + CAGE + ' run forceload add ' + (fx - 16) + ' ' + (fz - 16) + ' ' + (fx + 16) + ' ' + (fz + 16))
+    c4PreloadNear(server, CAGE, fx, fz, 400, 'cage slot' + slot)
     // forceload 是异步的：等 1 秒区块真进内存，建笼子 / 让 IP 在目的地生成反向门才不会落空
     server.scheduleInTicks(20, () => {
       try {
@@ -1241,7 +1267,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
     })
   })
 
-  // 7) forceload 常驻（不要撤销，见上面的注释）
+  // 7) forceload 只做瞬时预载（见上面的 c4PreloadNear），不再常驻
 
   // 8) S2：新舱 = 基地（住人）+ 传送器（跃迁机器）。等基地/门都建好后错峰建传送器，再 strip 基地按钮
   server.scheduleInTicks(200, () => {
@@ -1298,12 +1324,7 @@ function c4Lobby(server, player) {
   cube.provisioned = true
   c4Save()
 
-  // 先让目标区块真正加载完再传送：否则客户端一次性收 5×5 区块 + 服务端现场生成地形，
-  // 就会出现"卡在空中"和网络冲击。这里 forceload 5×5 区块，再等 2 秒才送人。
-  try {
-    let sx = Math.floor(c4CubeX(slot)), sz = Math.floor(C4_Z)
-    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (sx - 40) + ' ' + (sz - 40) + ' ' + (sx + 40) + ' ' + (sz + 40))
-  } catch (e) {}
+  // 这里只传玩家、不画门：区块由玩家自身/Ftb Chunks 负责，脚本不插一手（2026-10 用户要求）
   server.scheduleInTicks(100, () => {
     c4SendToCube(server, c4TeamOnline(t), slot)
     c4TeamOnline(t).forEach(m => {
@@ -1720,8 +1741,8 @@ function c4WarpBody(server, job) {
     return
   }
 
-  // ⓪ 确保本台区块加载（否则 c4PortalsNear 看不到门 → "关门 0 扇"）
-  server.runCommandSilent(c4ForceloadBox(slot, true))
+  // ⓪ 起点侧不预载：跃迁由玩家按按钮触发、人就在舱里，区块由玩家自身/Ftb Chunks 加载
+  //    （2026-10 用户要求：只保留"画门/搬门/反向门"相关的目的地预载）
 
   // ⓪.5 旧落点快照在选点后按【目标维度】写进 job.oldDest（见下面 dests 查表）
 
@@ -1789,7 +1810,7 @@ function c4WarpBody(server, job) {
   // 表现就是"目的地门比框架低半格"。
   let dx = d.x + 0.5, dz = d.z + 0.5, dy = d.y + 0.5
   let fx = Math.floor(dx), fz = Math.floor(dz)
-  server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
+  c4PreloadNear(server, d.dim, fx, fz, 600, 'warp-dest slot' + slot)
   // 剧场版时间轴（对齐原包 processors/runtime）：按键音已在右键那一刻播过，这里只做
   // 按下动画 + 动作条，“t=20/40/60 逐格结算+消耗，t=80 粒子爆发后进入自主跃迁”。
   let bx = c4CubeX(slot)
@@ -1852,7 +1873,7 @@ function c4WarpBody(server, job) {
         d = c4PickDestForSeed(server, slot, seedAcc)
         dx = d.x + 0.5; dz = d.z + 0.5; dy = d.y + 0.5
         fx = Math.floor(dx); fz = Math.floor(dz)
-        server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
+        c4PreloadNear(server, d.dim, fx, fz, 600, 'warp-dest slot' + slot)
       } catch (e) { console.warn('[C4] 重选目的地失败: ' + e) }
     }
     // 动作条在 t=1 就已经跑起来，这里只把显示值换成最终 seed（循环下一 tick 自动刷新）
@@ -1882,7 +1903,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
 
   let perform = (phase) => {
     try {
-      try { server.runCommandSilent(c4ForceloadBox(slot, true)) } catch (e0) {}
+      // 起点侧不预载（玩家在舱里）；目的地已在开跃迁时预载，这里只做门/房间操作
       let cur = c4CoreOfSlot(server, slot)
       if (!cur) {
         c4TellTeam(server, slot, c4t('cw.warp.abort'))
@@ -1946,8 +1967,9 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
         try {
           let ex0 = Math.floor(dx) - 8, ey0 = Math.floor(dy) - 8
           let ezFlush = Math.floor(dz) + 9, ezFar = Math.floor(dz) + 60
-          server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + (ex0 - 16) + ' ' + (ezFlush - 16)
-            + ' ' + (ex0 + 32) + ' ' + (ezFar + 32))
+          // 两处遗迹各瞬时预载 3×3（+60 格那处不在同一组区块里，得单独预载）
+          c4PreloadNear(server, d.dim, ex0, ezFlush, 400, 'edge-ruin-near')
+          c4PreloadNear(server, d.dim, ex0, ezFar, 400, 'edge-ruin-far')
           let lvE = c4Level(server, d.dim)
           let hasRuin = (z0) => {
             try { return lvE ? String(lvE.getBlock(ex0, ey0, z0).id) !== 'minecraft:air' : false } catch (e) { return false }
@@ -2094,7 +2116,7 @@ function c4RestoreHome(server, slot, idName) {
   let h = c4TeamOfSlot(slot)
   let ext = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 私有笼子固定 17³，与门/反向门一致（旧 ext 不参与）
   let fx = Math.floor(cx), fz = Math.floor(cz)
-  server.runCommandSilent('execute in ' + CAGE + ' run forceload add ' + (fx - 40) + ' ' + (fz - 40) + ' ' + (fx + 40) + ' ' + (fz + 40))
+  c4PreloadNear(server, CAGE, fx, fz, 600, 'restore-home slot' + slot)
   server.scheduleInTicks(5, () => {
     try {
       c4BuildRoom(server, CAGE, cx, C4_CORE_Y, cz, ext, true)
@@ -2149,11 +2171,9 @@ function c4WarpEnd(server, slot, label, job) {
         info2.cube.curDestDim = job.dest.dim
         c4Save()
       }
-      let d = job.dest
-      server.runCommandSilent('execute in ' + d.dim + ' run forceload add ' + d.cx + ' ' + d.cz)
-      server.scheduleInTicks(1200, () => {
-        try { server.runCommandSilent('execute in ' + d.dim + ' run forceload remove ' + d.cx + ' ' + d.cz) } catch (e) {}
-      })
+      // 目的地 3×3 由 c4PreloadNear('warp-dest') 负责（600t 后自动释放），
+      // 这里不再补"加 1 区块 / 1200t 后删 1 区块"——那是假释放（加 36 只删 1）。
+      // 玩家到站后由客户端/FTB Chunks 保活，脚本不常驻。
     }
   } catch (e) { console.warn('[C4] 落点记录失败: ' + e) }
   // S5：同维度随机出的临时落点 → 玩家离开 20s 后按旧落点清理（不写 cube.dest）
@@ -2236,10 +2256,9 @@ function c4CleanOldDest(server, slot, job) {
     return
   }
 
-  // 旧落点的区块大概率早就卸载了（上一跳的 forceload 也释放了）：fill/kill 只对已加载区块生效
-  try {
-    server.runCommandSilent('execute in ' + odc.dim + ' run forceload add ' + x0 + ' ' + z0 + ' ' + x1 + ' ' + z1)
-  } catch (e) { console.warn('[C4] 旧落点 forceload 失败: ' + e) }
+  // 旧落点的区块大概率早就卸载了（上一跳的瞬时预载也释放了）：fill/kill 只对已加载区块生效
+  // 统一走 c4PreloadBox：加载 + 200t 后自动释放同一矩形；5t 回调里提前 return / 抛异常都不会漏。
+  c4PreloadBox(server, odc.dim, x0, z0, x1, z1, 200, 'old-dest slot' + slot)
 
   server.scheduleInTicks(5, () => {
     try {
@@ -2289,10 +2308,7 @@ function c4CleanOldDest(server, slot, job) {
         }
       })
     } catch (e) { console.warn('[C4] 清理旧落点失败: ' + e) }
-    // 释放这一步临时加的 forceload（多留 10 秒，避免区块刚清完就被卸掉）
-    server.scheduleInTicks(200, () => {
-      try { server.runCommandSilent('execute in ' + odc.dim + ' run forceload remove ' + x0 + ' ' + z0 + ' ' + x1 + ' ' + z1) } catch (e) {}
-    })
+    // 释放已由外层 200t 定时器排好（释放放外层，早退/异常都不漏）
   })
 }
 
@@ -2661,7 +2677,8 @@ function c4CweRebuild(ctx) {
 function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   root.then(cmdRoot.literal('info').executes(ctx => { c4CmdInfo(ctx); return 1 }))
 
-  root.then(cmdRoot.literal('home').executes(ctx => { c4CmdHome(ctx); return 1 }))
+  root.then(cmdRoot.literal('home').executes(ctx => { c4CmdHome(ctx); return 1 })
+    .then(cmdRoot.literal('base').executes(ctx => { c4CmdHomeBase(ctx); return 1 })))
 
   // /cwp spawn · /cube spawn：回到出生点（基岩 0,0 的出生笼子）
   root.then(cmdRoot.literal('spawn').executes(ctx => { c4CmdSpawn(ctx); return 1 }))
@@ -2975,6 +2992,23 @@ function c4CmdHome(ctx) {
   else c4ReplyT(ctx, 'cw.home.fail')
 }
 
+// /cube home base：回【基地内腔】（不是传送仓）。校验链与 /cube home 完全一致，
+// 只是落点换成 c4BaseSeat（已含向下扩建后的地板 y）。
+function c4CmdHomeBase(ctx) {
+  let p = c4SrcPlayer(ctx)
+  if (!p) { c4ReplyT(ctx, 'cw.cmd.need_player'); return }
+  if (!c4Ftb().ok) { c4ReplyT(ctx, 'cw.home.no_team'); return }
+  let t = c4Team(p)
+  if (!t) { c4ReplyT(ctx, 'cw.home.no_team'); c4ReplyT(ctx, 'cw.home.hint'); return }
+  let key = c4TeamKey(t)
+  let cube = key ? c4CubeOfTeam(key) : null
+  if (!cube) { c4ReplyT(ctx, 'cw.home.no_cube', [c4TeamLabel(t)]); return }
+  if (!cube.provisioned) { c4ReplyT(ctx, 'cw.home.not_ready'); return }
+  let s = c4BaseSeat(cube.slot, 0, 1)
+  if (c4Tp(ctx.source.server, p, 'minecraft:overworld', s.x, s.y, s.z)) c4ReplyT(ctx, 'cw.home.base_ok', [cube.name])
+  else c4ReplyT(ctx, 'cw.home.base_fail')
+}
+
 function c4CmdHomeSlot(ctx, slot) {
   let p = c4SrcPlayer(ctx)
   if (!p) { c4ReplyT(ctx, 'cw.cmd.need_player'); return }
@@ -3103,7 +3137,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
       + ' run kill @e[type=immersive_portals:portal,distance=..128]')
   } catch (eOD) {}
   // ⓪ 先 forceload 目标范围（整数）
-  try { server.runCommandSilent('execute in ' + dim + ' run forceload add ' + (b.X0 - 32) + ' ' + (b.Z0 - 32) + ' ' + (b.X1 + 32) + ' ' + (b.Z1 + 32)) } catch (e0) {}
+  c4PreloadBox(server, dim, b.X0 - 16, b.Z0 - 16, b.X1 + 16, b.Z1 + 16, 600, 'relocate slot' + slot)   // 600t 后自动释放
   // ⓪ 密封外箱：box 各边外扩 3 格，flag=2 砌完整外壳（断水），壳与舱之间 3 格空腔清 air
   let lvOw2 = c4OwLevel(server) || c4Level(server, dim)
   if (lvOw2) {
@@ -3224,10 +3258,7 @@ function c4CmdRelocate(ctx, slot, x, y, z) {
   let ext = c4Ext(info.cube)
   if (by2 - 4 < minY || by2 + 18 + 16 * ext.py > maxY - 1) { c4Reply(ctx, 'y 不合法（含扩展高度）：' + minY + '..' + maxY); return }
   let bx3 = Math.floor(Number(x)), bz3 = Math.floor(Number(z))
-  // 先同步 forceload 目标区，20t 后再真正搬迁（等区块加载完成，flag=2 setBlock 才写得进去）
-  try {
-    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (bx3 - 48) + ' ' + (bz3 - 48) + ' ' + (bx3 + 48) + ' ' + (bz3 + 48))
-  } catch (eF) {}
+  // 这里不预载：20t 后 c4Relocate 自己会按舱体范围预载（一次就够）
   let g = C4_GEN
   server.scheduleInTicks(20, () => {
     if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（relocate）'); return }
@@ -3411,6 +3442,8 @@ function c4CmdDoors(ctx, slot) {
   let rpx = dest ? (dest.x + 0.5) : bc.x
   let rpy = dest ? (dest.y + 0.5) : bc.y
   let rpz = dest ? (dest.z + 0.5) : bc.z
+  // 目的地那侧瞬时预载 3×3：30t 后的 c4MakeReverse 在目的地维度里造反向门，区块没加载会静默失败
+  c4PreloadNear(server, rDimId, rpx, rpz, 400, 'doors-rev slot' + slot)
   try {
     aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(rDimId), rpx, rpy, rpz, false, rDimId, cubeId, ext0, false, slot)
   } catch (e4) { console.warn('[C4] 指门失败: ' + e4) }
@@ -4183,14 +4216,10 @@ ServerEvents.loaded(event => {
     }
   }
 
-  // ChunkLoader 是内存态，重启必丢 → 按登记表重挂
+  // ★ 不再按登记表重挂 forceload：队伍常加载交给 FTB Chunks，脚本不为任何基地保留常加载。
+  //   （C4_AUTO.chunkLoader 仅为兼容保留字段，已强制 false；c4ChunkLoader 本身是空实现。）
   let n = 0
   let cubes = c4Db().cubes
-  if (C4_AUTO.chunkLoader) for (let k in cubes) if (cubes[k] && cubes[k].provisioned) {
-    c4ChunkLoader(server, cubes[k].slot)
-    server.runCommandSilent(c4ForceloadBox(cubes[k].slot, true))   // 保证实体可被枚举
-    n++
-  }
 
   try { c4HealCubeNames() } catch (e) { console.warn('[C4] 基地名自愈失败: ' + e) }
   // 等区块/实体加载完再清大厅门
@@ -4353,21 +4382,9 @@ function c4ClearTeleBox(server, a) {
 }
 // 把本台的门（按 cw_id_/cw_team_ tag 全局找，不受旧位置距离限制）搬到指定舱体的 6 个门面
 // 建（或重建）一台传送器：舱体 + 6 面门 + 操控台/按钮/算子位（c4BuildRoom 已含面板/按钮）
-// 按 box 全量 forceload（按 16×16 区块逐个 add，覆盖四个角与六面中心）
+// 建门/搬门的瞬时预载：17³ 舱体只落在 2×2 区块内 → 3×3 足够；400t 后自动释放（不常驻）。
 function c4DoorPreload(server, ext, core) {
-  let b = c4RoomBox(core.x, core.y, core.z, ext)
-  let cx0 = Math.floor((b.X0 - 17) / 16), cx1 = Math.floor((b.X1 + 17) / 16)
-  let cz0 = Math.floor((b.Z0 - 17) / 16), cz1 = Math.floor((b.Z1 + 17) / 16)
-  let n = 0
-  for (let cx = cx0; cx <= cx1; cx++) {
-    for (let cz = cz0; cz <= cz1; cz++) {
-      try {
-        server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (cx * 16) + ' ' + (cz * 16))
-        n++
-      } catch (e) {}
-    }
-  }
-  return n
+  return c4PreloadNear(server, 'minecraft:overworld', core.x, core.z, 400, 'door-preload')
 }
 // 建门统一入口：先全量预载 → 延后 ≥20t 再搬/建 → 10t 后按 face tag 校验，不足再补一轮
 function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
@@ -4375,9 +4392,8 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
   let idName = (info && info.cube && info.cube.id) ? info.cube.id : ('cube' + slot)
   let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
   let cx = a.x + 0.5, cy = a.y + 8.5, cz = a.z + 0.5
-  try {
-    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (a.x - 24) + ' ' + (a.z - 24) + ' ' + (a.x + 24) + ' ' + (a.z + 24))
-  } catch (e) {}
+  // 瞬时预载 3×3：覆盖模板放置 + 10t 后 c4EnsureSix + 20t 后 c4MakeReverse；400t 后自动释放
+  c4PreloadNear(server, 'minecraft:overworld', a.x, a.z, 400, 'tele-build slot' + slot)
   let bb = c4RoomBox(cx, cy, cz, ext0)
   let tmpl = 0
   try {
@@ -4461,6 +4477,9 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
   let dpx = dest ? (Number(dest.x) + 0.5) : bc.x
   let dpy = dest ? (Number(dest.y) + 0.5) : bc.y
   let dpz = dest ? (Number(dest.z) + 0.5) : bc.z
+  // 目的地那侧也要瞬时预载 3×3：20t 后的 c4MakeReverse 是在【目的地维度】里 complete_bi_way_portal，
+  // 区块没加载时它静默什么都不做（以前靠"上一步跃迁留下的常加载"兜着，现在必须自己预载）。
+  c4PreloadNear(server, destDimId, dpx, dpz, 400, 'tele-rev slot' + slot)
   try {
     c4Retarget(server, cx, cy, cz, destKey, dpx, dpy, dpz, false, destDimId, idName, ext0, false, slot)
   } catch (e) { console.warn('[C4] 传送器指门失败: ' + e) }
@@ -4558,7 +4577,7 @@ function c4BuildVerticalLinks(server, slot, noRetry) {
   // 区块没加载时 summon/portal 会静默失败 → 先把这两点周围 forceload 起来
   // forceload 只吃整数坐标：x.5 必须取整，否则整条命令失败、区块不加载 → 门/标记全落空
   let flx = Math.floor(P.src.x), flz = Math.floor(P.src.z)
-  try { server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (flx - 24) + ' ' + (flz - 24) + ' ' + (flx + 24) + ' ' + (flz + 24)) } catch (e0) {}
+  c4PreloadNear(server, 'minecraft:overworld', flx, flz, 200, 'link slot' + slot)
   // 先清掉这两点附近旧的链接门（绝不碰 6 面门：只杀带 cw_link 的）
   try { server.runCommandSilent('execute in minecraft:overworld positioned ' + P.src.x + ' ' + P.src.y + ' ' + P.src.z + ' run kill @e[type=immersive_portals:portal,tag=cw_link,distance=..8]') } catch (e) {}
   try { server.runCommandSilent('execute in minecraft:overworld positioned ' + P.dst.x + ' ' + P.dst.y + ' ' + P.dst.z + ' run kill @e[type=immersive_portals:portal,tag=cw_link,distance=..8]') } catch (e2) {}
@@ -4626,8 +4645,8 @@ function c4CmdBind(ctx, slot, x, y, z) {
   // ⓪ 新旧位置都 forceload（否则实体枚举/建门落空；forceload 只吃整数）
   try {
     let ofx = Math.floor(oldCore.x), ofz = Math.floor(oldCore.z)
-    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (ofx - 24) + ' ' + (ofz - 24) + ' ' + (ofx + 24) + ' ' + (ofz + 24))
-    server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (bx - 24) + ' ' + (bz - 24) + ' ' + (bx + 24) + ' ' + (bz + 24))
+    c4PreloadNear(server, 'minecraft:overworld', ofx, ofz, 400, 'bind-old slot' + slot)
+    c4PreloadNear(server, 'minecraft:overworld', bx, bz, 400, 'bind-new slot' + slot)
   } catch (e9) {}
   // ① 清旧门：按 cube 归属 + face tag（不用 cw_team_* 单独匹配，同队多台会误删别人的门）
   let killed = 0
@@ -4917,7 +4936,7 @@ function c4CarveShaft(server, slot) {
     let hx = Math.floor(bx), hz = Math.floor(bz)
     let tx0 = Math.floor(tx), tz0 = Math.floor(tz)
     ;[[tel.x, tel.z], [bas.x, bas.z]].forEach(q => {
-      try { server.runCommandSilent('execute in minecraft:overworld run forceload add ' + (q[0] - 24) + ' ' + (q[1] - 24) + ' ' + (q[0] + 24) + ' ' + (q[1] + 24)) } catch (e0) {}
+      try { c4PreloadNear(server, 'minecraft:overworld', q[0], q[1], 200, 'carve slot' + slot) } catch (e0) {}
     })
     // ② 打通两个洞口（清掉历史遗留玻璃/水/封块；再清洞的另一侧一格，防止旧结构顶住门面）
     try {
@@ -4956,10 +4975,8 @@ function c4ToggleHole(server, slot, player) {
     let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
     let tp = c4TeleCore(slot)
     let cx = tp.x, cy = tp.y, cz = tp.z
-    try {
-      server.runCommandSilent('execute in minecraft:overworld run forceload add '
-        + (Math.floor(cx) - 24) + ' ' + (Math.floor(cz) - 24) + ' ' + (Math.floor(cx) + 24) + ' ' + (Math.floor(cz) + 24))
-    } catch (e0) {}
+    // 瞬时预载 3×3：覆盖建隧道/补门/12t 后重指；400t 后自动释放
+    c4PreloadNear(server, 'minecraft:overworld', cx, cz, 400, 'hole slot' + slot)
 
     // ── 还原：把 down 面补回来并指回原目标 ──────────────────────────────────
     if (c4HoleOpen(slot)) {
@@ -5144,12 +5161,31 @@ ServerEvents.tick(event => {
     for (let k0 in cb0) {
       let c0 = cb0[k0]
       let by0 = c0 && c0.btn ? Number(c0.btn.y) : NaN
-      if (!isNaN(by0) && by0 > 50 && by0 < 180) { delete c0.btn; nT++ }
+      if (!isNaN(by0) && by0 > 50 && by0 < C4_TELE_FLOOR) { delete c0.btn; nT++ }
     }
-    if (nT > 0) { c4Save(); console.info('[C4] 传送器布局迁移：清理 ' + nT + ' 个旧地面按钮锚点（y 50..180）') }
+    if (nT > 0) { c4Save(); console.info('[C4] 传送器布局迁移：清理 ' + nT + ' 个旧地面按钮锚点（y 50..' + (C4_TELE_FLOOR - 1) + '）') }
   } catch (eTl) { console.warn('[C4] 传送器布局迁移异常: ' + eTl) }
   // S1：老存档的门没有 cw_face_*/cw_team_* → 第一个 tick 按 cw_id_* + 几何补一次（幂等，等下次操作也会补）
   if (C4_AUTO.doorTags) try { c4MigrateDoorTags(event.server) } catch (e) { console.warn('[C4] 门 tag 迁移异常: ' + e) }
+  // 一次性自检（最多 3 台）：home 落点必须落在【传送仓】而不是基地内腔（DB 里 btn 常为 null，靠 tele 兜底）
+  try {
+    let dbH = c4Db(), cbH = dbH.cubes || {}, shownH = 0
+    for (let kH in cbH) {
+      if (shownH >= 3) break
+      let cH = cbH[kH]
+      if (!cH || !cH.provisioned) continue
+      let slotH = Number(cH.slot)
+      let ts = c4HomeSeat(slotH), bs = c4BaseSeat(slotH, 0, 1)
+      let ty = (cH.tele && cH.tele.y !== undefined) ? Number(cH.tele.y) : C4_TELE_FLOOR
+      console.info('[C4] home seat 校验 slot' + slotH + ': tele=(' + ts.x + ', ' + ts.y + ', ' + ts.z
+        + ') base=(' + bs.x + ', ' + bs.y + ', ' + bs.z + ') btn=' + (cH.btn ? 'y' + cH.btn.y : 'null') + ' teleFloor=' + ty)
+      if (Number(ts.y) < ty + 1) {
+        console.warn('[C4] home seat 退回基地！slot' + slotH + ' seat.y=' + ts.y + ' < tele.y+1=' + (ty + 1)
+          + '（检查 c4BtnPos 的 tele 兜底与 C4_TELE_FLOOR=' + C4_TELE_FLOOR + '）')
+      }
+      shownH++
+    }
+  } catch (eHm) { console.warn('[C4] home seat 校验异常: ' + eHm) }
   // 一次性：清掉 slot2..14 管道里旧版遗留的第 3 扇/错位 3×3（DB 标记，只跑一次；不碰 17×17）
   if (C4_AUTO.cleanStrayLinks) try {
     let dbS = c4Db()
