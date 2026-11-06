@@ -1360,7 +1360,11 @@ const C4_DIM_Y = {
   'hexahedron:the_sugarscape': 133,
   'hexahedron:forsaken_planes': 134,
   'hexahedron:lavender_fields': 134,
-  'hexahedron:the_edge_of_reality': 100,   // flat 97 层 nothing，不阻挡 motion
+  // ⚠ the_edge_of_reality 是 flat：layers [{height:97, block:untagged_mobs:nothing}]
+  //   → y=0..96 全是【实心】nothing，y>=97 才是空气。房间盒 Y0 = core-8，
+  //   所以 core 必须 >= 105 才能让整个房间（含地板）浮在空气层里；
+  //   原值 100 会让房间下半截 5 层埋进实心虚空方块，玩家穿门后被堵死、看不到房间。
+  'hexahedron:the_edge_of_reality': 105,  // = 97 + 8（房间 Y0 正好贴空气层）
   'minecraft:overworld': 100               // 256 层 filling，靠 fill 挖房间，必须保持 100
 }
 
@@ -1650,6 +1654,7 @@ function c4DestRoomExists(server, d) {
     return true
   } catch (e) { return false }
 }
+
 // 反向门兜底：complete_bi_way_portal 之后按目的地维度点数，<6 则补（最多 2 轮，间隔 20t）
 function c4CheckDest(server, slot, idName, d, dx, dy, dz, attempt, cb) {
   let g = C4_GEN
@@ -1790,8 +1795,28 @@ function c4WarpBody(server, job) {
   let prevDest = (info && info.cube) ? c4DestOf(info.cube, targetDim) : null
   let useFixed = false, rebuildFixed = false
   if (!job.forceRandom && prevDest && c4DestValid(server, prevDest)) {
-    if (c4DestRoomExists(server, prevDest)) useFixed = true
-    else { rebuildFixed = true; console.warn('[C4] 落点房间缺失，重建 @' + prevDest.x + ',' + prevDest.y + ',' + prevDest.z + ' dim=' + prevDest.dim) }
+    // ⚠ 这里【不能】用 c4DestRoomExists 探针：此刻目的地区块还没预载（预载在本函数稍后），
+    //   Level.getBlock 对未加载区块一律返回 air → 探针必然 false → 会把好记录当坏的删掉、
+    //   每次都重新随机落点，「固定落点复用」彻底失效。
+    //   改为确定性判断：维度有固定 core y 时（如 edge=105），DB 里的 y 与它不符就是旧版
+    //   写入的坏记录（当时 y=100，房间埋进实心 nothing），删掉重新分配；否则直接复用。
+    //   房间是否真的存在，交给 perform（预载已生效）与 c4FinishWarp 的探针 + 补建兜底。
+    let fixedY = C4_DIM_Y[targetDim]
+    let badY = (fixedY !== undefined && Number(prevDest.y) !== Number(fixedY))
+    if (badY) {
+      console.warn('[C4] 落点 y 与维度固定 y 不符（DB y=' + prevDest.y + '，应为 ' + fixedY
+        + '）→ 清除错误记录 @' + prevDest.x + ',' + prevDest.y + ',' + prevDest.z
+        + ' dim=' + targetDim + '，本次重新分配')
+      try {
+        if (info && info.cube && info.cube.dests) {
+          delete info.cube.dests[targetDim]
+          c4Save()
+        }
+      } catch (eDel) { console.warn('[C4] 清除错误落点记录失败: ' + eDel) }
+      prevDest = null
+    } else {
+      useFixed = true
+    }
   }
   job.useFixedDest = useFixed
   job.rebuildFixed = rebuildFixed
@@ -1803,6 +1828,14 @@ function c4WarpBody(server, job) {
   } else if (job.forceRandom) {
     d = c4PickTempDest(server, slot, job.randomDim || targetDim)
     job.tempDest = true
+    // edge 的「同维度二次确认随机传送」：每次都新建一间房，并把新房坐标写回 dests
+    // 成为新的可回访固定落点（不再当临时落点 20s 后拆掉）。仅此维度，其它维度不变。
+    if (String(d.dim) === 'hexahedron:the_edge_of_reality') {
+      job.edgeRandomPersist = true
+      // 新房写回 DB 后，旧固定落点房间就成了"上一处"，跃迁成功收尾时按常规拆掉，避免累积。
+      // prevDest 此刻仍是 DB 里那个旧落点（上面没进 useFixed 分支，未被改动）。
+      job.oldDest = prevDest
+    }
   } else {
     d = c4PickDestForSeed(server, slot, seedNow)
   }
@@ -1867,7 +1900,11 @@ function c4WarpBody(server, job) {
       seedAcc = acc
     } catch (eAcc) { seedAcc = 0 }
     // 倒计时期间插槽可能被改动：以 t=60 的最终 seed 为准，重选目的地（原包 t=85 才选维度）
-    if (seedAcc !== d.seed) {
+    // ★ edge 的二次确认随机传送例外：c4PickTempDest 选出的随机坐标（seed=-1）不能被
+    //   seedAcc=999 重算覆盖掉，否则"随机传送"实际去的是按 999 重新选的点。
+    //   这里仅跳过覆盖、保留 d，其它维度/非随机传送的重算逻辑完全不变。
+    let keepRandomDest = job.edgeRandomPersist && String(d.dim) === 'hexahedron:the_edge_of_reality'
+    if (seedAcc !== d.seed && !keepRandomDest) {
       console.warn('[C4] 槽位 ' + slot + ' 倒计时期间插槽被改动：seed ' + d.seed + ' → ' + seedAcc + '，按新 seed 重选目的地')
       try {
         d = c4PickDestForSeed(server, slot, seedAcc)
@@ -1875,6 +1912,8 @@ function c4WarpBody(server, job) {
         fx = Math.floor(dx); fz = Math.floor(dz)
         c4PreloadNear(server, d.dim, fx, fz, 600, 'warp-dest slot' + slot)
       } catch (e) { console.warn('[C4] 重选目的地失败: ' + e) }
+    } else if (keepRandomDest) {
+      console.info('[C4] edge 随机传送：保留随机落点 @' + d.x + ',' + d.y + ',' + d.z + '（跳过 t=60 seed 重算覆盖）')
     }
     // 动作条在 t=1 就已经跑起来，这里只把显示值换成最终 seed（循环下一 tick 自动刷新）
     job.seedShown = seedAcc
@@ -1884,11 +1923,45 @@ function c4WarpBody(server, job) {
 // 成功收尾：写 dests/curDestDim、记 job.dest、日志、10t 后 c4WarpEnd
 // （原 c4CorrectLanding「玩家不在房间 ±9 格内 tp 回中心」已于 2026-10-29 按需求删除）
 function c4FinishWarp(server, slot, label, job, info, d, idName) {
+  // ★ 房间校验：门指过去了不代表房间建起来了（the_edge_of_reality 的 flat/nothing 维度
+  //   在卡顿或预载 ttl 到期时，place template/fill 会静默落在未加载区块上）。
+  //   探针前先补一次瞬时预载：c4DestRoomExists 直接 getBlock，区块未加载会误判 false。
+  try { c4PreloadNear(server, d.dim, Number(d.x), Number(d.z), 400, 'finish-probe ' + idName) } catch (eP3) {}
+  let roomOK = false
+  try { roomOK = c4DestRoomExists(server, { dim: d.dim, x: d.x, y: d.y, z: d.z }) } catch (eR) { roomOK = false }
+  if (!roomOK) {
+    // 一次自愈：forceload 是异步的，首轮建房可能整批静默失败。重新预载 + 补建，
+    // 20t 后复核；仍失败才回滚（不落库，下次跃迁重新分配并重建）。
+    let g = C4_GEN
+    if (!job._roomRetry) {
+      job._roomRetry = 1
+      console.warn('[C4] 目的地房间未生成 → 重新预载 + 补建后复核 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+      try { c4PreloadNear(server, d.dim, Number(d.x), Number(d.z), 600, 'room-retry slot' + slot) } catch (eP4) {}
+      try { c4BuildRoom(server, d.dim, Number(d.x) + 0.5, Number(d.y) + 0.5, Number(d.z) + 0.5,
+        { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }, true) } catch (eB2) {
+        console.warn('[C4] 房间补建异常: ' + eB2)
+      }
+      server.scheduleInTicks(20, () => {
+        if (g !== C4_GEN || C4_BUSY !== job) return
+        c4FinishWarp(server, slot, label, job, info, d, idName)
+      })
+      return
+    }
+    console.warn('[C4] 跃迁中止：目的地房间补建后仍未生成 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
+      + '（门已指向但房间缺失，回滚到起点，不落库）')
+    try { c4TellTeam(server, slot, c4t('cw.warp.abort')) } catch (eT) {}
+    try { c4BarTeam(server, slot, '跃迁失败：目的地房间未生成，已回到起点') } catch (eB) {}
+    try { c4RestoreHome(server, slot, idName) } catch (e2) {}
+    c4WarpEnd(server, slot, label, job)
+    return
+  }
   try {
-    if (!job.tempDest && info && info.cube) {
+    // edge 的随机传送虽然带 tempDest 标记，但要写回 dests 成为可回访的新固定落点。
+    if ((!job.tempDest || job.edgeRandomPersist) && info && info.cube) {
       c4DestSet(info.cube, d.dim, d.x, d.y, d.z)
       info.cube.curDestDim = d.dim
       c4Save()
+      if (job.edgeRandomPersist) console.info('[C4] edge 随机传送：新落点已写入 dests @' + d.x + ',' + d.y + ',' + d.z)
     }
   } catch (e) {}
   job.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z, cx: Math.floor(d.x / 16) * 16, cz: Math.floor(d.z / 16) * 16 }
@@ -1950,15 +2023,21 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
 
       // ═══ 动画版：先建房（房间里真实存在）→ 分步指门（C4_PLANE_WAIT 内飞过去）→ 反向门 → 校验 ═══
       // 先建房的好处：分步指门时客户端渲染到的是新世界真实地形/房间，而不是"没建的虚空"=黑屏
-      if (!job.useFixedDest) {
-        // 目的地房间固定 17³（与 15×15 门 / 反向门 / 传送器一致）；旧 ext 只属于基地，不能带进目的地
+      // ★ 复用固定落点时也必须确认房间在：the_edge_of_reality 等 flat/nothing 维度
+      //   曾因预载 ttl 到期/服务器卡顿导致首次建房静默失败，之后 useFixedDest 会一直跳过建房。
+      let roomExists = false
+      try { roomExists = c4DestRoomExists(server, { dim: d.dim, x: d.x, y: d.y, z: d.z }) } catch (eRe) { roomExists = false }
+      if (!roomExists) {
+        console.info('[C4] 目的地房间缺失 → 补建 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
+          + (job.useFixedDest ? '（固定落点复用时发现）' : '（首次分配）'))
+        // 补建前重新预载，保证 place template / fill 落在已加载区块上
+        try { c4PreloadNear(server, d.dim, Math.floor(dx), Math.floor(dz), 600, 'rebuild-room slot' + slot) } catch (eP2) {}
         let room0 = c4BuildRoom(server, d.dim, dx, dy, dz, ext0, true)
         if (room0 && Math.floor(dy - 8) !== room0.Y0) {
           dy = room0.Y0 + 8.5
           d.y = Math.round(dy - 0.5)
           console.warn('[C4] 动画版：房间 y 被夹取 → core=' + d.y + '（房间 ' + room0.Y0 + '..' + room0.Y1 + '）')
         }
-      } else {
       }
       // ★ edge 维度：固定落点；遗迹两处（幂等：中心格不是空气就跳过，复用旧落点也会补建）
       //   ① 贴面遗迹：-z 面紧贴房间 +z 面（房间 Z1=dz+8，遗迹 Z0=dz+9）
@@ -1976,9 +2055,11 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
           }
           if (!hasRuin(ezFlush)) {
             let nF = Number(server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + ex0 + ' ' + ey0 + ' ' + ezFlush))
+            console.info('[C4] edge 贴面遗迹 place @' + ex0 + ',' + ey0 + ',' + ezFlush + ' ret=' + nF)
           } else 0
           if (!hasRuin(ezFar)) {
             let nR = Number(server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + ex0 + ' ' + ey0 + ' ' + ezFar))
+            console.info('[C4] edge 远处遗迹 place @' + ex0 + ',' + ey0 + ',' + ezFar + ' ret=' + nR)
           } else 0
         } catch (eEdge) { console.warn('[C4] edge 遗迹处理失败: ' + eEdge) }
       }
@@ -2166,7 +2247,7 @@ function c4WarpEnd(server, slot, label, job) {
   try {
     if (job && job.dest) {
       let info2 = c4TeamOfSlot(slot)
-      if (info2 && info2.cube && !job.tempDest) {
+      if (info2 && info2.cube && (!job.tempDest || job.edgeRandomPersist)) {
         c4DestSet(info2.cube, job.dest.dim, job.dest.x, job.dest.y, job.dest.z)
         info2.cube.curDestDim = job.dest.dim
         c4Save()
@@ -2177,8 +2258,9 @@ function c4WarpEnd(server, slot, label, job) {
     }
   } catch (e) { console.warn('[C4] 落点记录失败: ' + e) }
   // S5：同维度随机出的临时落点 → 玩家离开 20s 后按旧落点清理（不写 cube.dest）
+  // ★ edge 随机传送例外：新房已写回 dests 成为固定落点，不能当临时房拆掉。
   try {
-    if (job && job.tempDest && job.dest) {
+    if (job && job.tempDest && !job.edgeRandomPersist && job.dest) {
       let td = { dim: job.dest.dim, x: job.dest.x, y: job.dest.y, z: job.dest.z }
       server.scheduleInTicks(1200, () => {
         try { c4CleanOldDest(server, slot, { oldDest: td, dest: { dim: 'minecraft:the_nether', x: 0, y: 64, z: 0 }, destOK: true }) } catch (e2) {}
@@ -2454,9 +2536,13 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
     let sd0 = 0
     try { sd0 = c4ReadSeed(server, slot) } catch (e0) { sd0 = 0 }
     let targetDim = String(C4_SEED_DIMS[sd0] || C4_SEED_DIMS[0])
-    // 固定房间已坏（探针判定）→ 必须先走重建，不能被"同维度二次确认"拦下来
+    // 固定房间已坏 → 必须先走重建，不能被"同维度二次确认"拦下来。
+    // ⚠ 这里【不能】用 c4DestRoomExists 探针：玩家按按钮时目的地区块通常没加载，
+    //   getBlock 对未加载区块一律返回 air → 探针必然 false → 每次都被当成"缺失"，
+    //   edge 的二次确认随机传送就永远触发不了。改用确定性判断：y 与维度固定 y 不符才算坏。
     let fixedEntry0 = c4DestOf(info.cube, targetDim)
-    let fixedBad = !!(fixedEntry0 && !c4DestRoomExists(server, fixedEntry0))
+    let fixedY0 = C4_DIM_Y[targetDim]
+    let fixedBad = !!(fixedEntry0 && fixedY0 !== undefined && Number(fixedEntry0.y) !== Number(fixedY0))
     let curDim = (info.cube && info.cube.curDestDim) ? String(info.cube.curDestDim) : null
     if (fixedBad) {
       curDim = null
@@ -4625,7 +4711,21 @@ function c4CmdDestShow(ctx, slot) {
   for (let i = 0; i < keys.length; i++) {
     let k = keys[i], e = t[k]
     let dd = { dim: k, x: Number(e.x), y: Number(e.y), z: Number(e.z) }
-    c4Reply(ctx, '  ' + k + ' @' + dd.x + ',' + dd.y + ',' + dd.z + '（房间' + (c4DestRoomExists(ctx.source.server, dd) ? '存在' : '缺失') + '）')
+    // 先做确定性检查（y 与维度固定 y 是否一致），再做方块探针。
+    // 探针依赖区块已加载：未加载时会误报"缺失"，所以标注出来，避免误导排障。
+    let fixedY = C4_DIM_Y[k]
+    let yBad = (fixedY !== undefined && Number(dd.y) !== Number(fixedY))
+    // 用原版命令判定区块是否已加载（不引入新 Java API 假设）
+    let loaded = false
+    try {
+      loaded = Number(ctx.source.server.runCommandSilent(
+        'execute in ' + k + ' if loaded ' + Math.floor(dd.x) + ' ' + Math.floor(dd.z) + ' run time query gametime')) > 0
+    } catch (eC) { loaded = false }
+    let state
+    if (yBad) state = 'y 不合规（应为 ' + fixedY + '）'
+    else if (!loaded) state = '区块未加载，无法判定'
+    else state = c4DestRoomExists(ctx.source.server, dd) ? '存在' : '缺失'
+    c4Reply(ctx, '  ' + k + ' @' + dd.x + ',' + dd.y + ',' + dd.z + '（房间' + state + '）')
   }
 }
 // /cube admin bind <slot> <x> <y> <z>：写 cube.btn，清旧 6 面门，按新按钮原点重建 6 门并校验

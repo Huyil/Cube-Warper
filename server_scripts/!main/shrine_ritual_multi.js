@@ -232,7 +232,69 @@ function ritualSetBlock (server, dim, x, y, z, id) {
   server.runCommandSilent('execute in ' + dim + ' run setblock ' + x + ' ' + y + ' ' + z + ' ' + id)
 }
 
+// 给法阵附近的玩家一条提示（只读反馈，失败也绝不影响仪式状态）
+function ritualTellNear (server, dim, x, y, z, msg) {
+  try {
+    server.runCommandSilent('execute in ' + dim + ' positioned ' + x + ' ' + y + ' ' + z +
+      ' run tellraw @a[distance=..16] ' + JSON.stringify({ text: msg, color: 'gray' }))
+  } catch (err) {}
+}
+
 // ---------------------------------------------------------------------------- 仪式主流程
+
+// 按维度读方块 id（cw_cubes.js 同款 API：getLevel(ResourceLocation) + getBlock().id）
+// getLevel 只吃 ResourceLocation，不能直接传字符串；读不到时返回 null，调用方按「不可判定」保守处理。
+var RITUAL_RL = null
+function ritualDimKey (dim) {
+  if (!RITUAL_RL) RITUAL_RL = Java.loadClass('net.minecraft.resources.ResourceLocation')
+  var s = String(dim)
+  var i = s.indexOf(':')
+  return i < 0 ? new RITUAL_RL('minecraft', s) : new RITUAL_RL(s.substring(0, i), s.substring(i + 1))
+}
+function ritualLevel (server, dim) {
+  try { return server.getLevel(ritualDimKey(dim)) } catch (err) { return null }
+}
+function ritualBlockIdAt (server, dim, x, y, z) {
+  try {
+    var lv = ritualLevel(server, dim)
+    if (!lv) return null
+    var b = lv.getBlock(x, y, z)
+    return b ? String(b.id) : null
+  } catch (err) {
+    return null
+  }
+}
+
+// 只读扫描：以 marker 为基准，读中心方块 + 8 个方位方块，预测会累出的 scores。
+// 全程不写任何方块、不播粒子，只用于启动前 preflight（结算时方位已被吞空，不重扫）。
+function ritualScan (server, dim, bx, by, bz) {
+  var scores = ritualNewScores()
+  for (var i = 0; i < RITUAL_RING.length; i++) {
+    var x = bx + RITUAL_RING[i][0]
+    var y = by - 2
+    var z = bz + RITUAL_RING[i][1]
+    var id = ritualBlockIdAt(server, dim, x, y, z)
+    if (id !== null) {
+      for (var k = 0; k < RITUAL_SCORE_MAP.length; k++) {
+        if (RITUAL_SCORE_MAP[k][0] === id) { scores[RITUAL_SCORE_MAP[k][1]] = scores[RITUAL_SCORE_MAP[k][1]] + 1; break }
+      }
+    }
+  }
+  var center = ritualBlockIdAt(server, dim, bx, by, bz)
+  return { scores: scores, center: center }
+}
+
+// 判断「中心方块 id + 分数」是否恰好命中某条配方。
+// 启动前用 scan 预测分数；结算时用 job 累计分数（此时材料已被吞，不能再重扫方位）。
+function ritualMatchRecipe (center, scores) {
+  if (center === null) return null
+  for (var i = 0; i < RITUAL_RECIPES.length; i++) {
+    var r = RITUAL_RECIPES[i]
+    if (center !== r.center) continue
+    if (ritualNeedMet({ scores: scores }, r.need)) return r
+  }
+  return null
+}
 
 // 右键入口（!rightclickevents.js 调这里）：level 是实体所在维度，px/py/pz 是玩家/假玩家坐标
 function ritualMultiTryStart (server, level, px, py, pz) {
@@ -245,10 +307,21 @@ function ritualMultiTryStartAt (server, dim, px, py, pz) {
   var marker = ritualFindMarker(server, dim, px, py, pz)
   if (!marker) return false
   if (ritualAnyActive(server, dim)) return false
-  return ritualMultiStartJob(server, dim, marker)
+  // ★ 启动前 preflight：只读预测分数，凑不出配方就拒绝启动——一个方块都不动、不吞材料。
+  var bx = Math.floor(Number(marker.x)), by = Math.floor(Number(marker.y)), bz = Math.floor(Number(marker.z))
+  var scan = ritualScan(server, dim, bx, by, bz)
+  if (scan.center === null) {
+    ritualTellNear(server, dim, bx, by, bz, '⟢ 仪式未启动：读不到法阵中心方块（区块未加载？）')
+    return false
+  }
+  if (ritualMatchRecipe(scan.center, scan.scores) === null) {
+    ritualTellNear(server, dim, bx, by, bz, '⟢ 仪式未启动：中心方块与 8 个方位材料不匹配任何配方（材料保持原样）')
+    return false
+  }
+  return ritualMultiStartJob(server, dim, marker, scan)
 }
 
-function ritualMultiStartJob (server, dim, marker) {
+function ritualMultiStartJob (server, dim, marker, scan) {
   var x = Number(marker.x)
   var y = Number(marker.y)
   var z = Number(marker.z)
@@ -268,7 +341,11 @@ function ritualMultiStartJob (server, dim, marker) {
     bz: bz,
     step: 1,
     left: RITUAL_TICK_INTERVAL,
-    scores: ritualNewScores()
+    scores: ritualNewScores(),
+    // ★ 分数在启动时就按 preflight 的真实摆法定稿，此后不再累加：
+    //   逐秒 consume 只负责演出 + 记录吞了什么；玩家中途改动/重复启动不会让分数翻倍或漂移。
+    finalScores: scan ? scan.scores : null,
+    consumed: []          // 逐方位记录「吞掉的原始方块」，供结算失败时按原位返还
   }
   RITUAL_JOBS[key] = job
 
@@ -323,36 +400,89 @@ function ritualConsume (server, job, off) {
   server.runCommandSilent(at + ' particle dust_color_transition 1 0 0 5 0 0 0 ~ ~ ~ 0.5 0.5 0.5 0 20 force')
   server.runCommandSilent(at + ' particle alexscaves:void_being_eye ~ ~1 ~ 0 0 0 0 1 force')
 
-  for (var i = 0; i < RITUAL_SCORE_MAP.length; i++) {
-    var m = RITUAL_SCORE_MAP[i]
-    if (ritualBlockIs(server, job.dim, bx, by, bz, m[0])) {
-      job.scores[m[1]] = job.scores[m[1]] + 1
-      break
+  // 先读真实方块 id 再湮灭：记进 job.consumed，失败时才知道要还原什么。
+  // 读不到 id（区块刚好卸载等）记为 null → 保守视为空气，不参与返还计分。
+  var eatenId = ritualBlockIdAt(server, job.dim, bx, by, bz)
+  if (eatenId === null || eatenId === 'minecraft:air') eatenId = null
+  var hit = null
+  if (eatenId !== null) {
+    for (var i = 0; i < RITUAL_SCORE_MAP.length; i++) {
+      if (RITUAL_SCORE_MAP[i][0] === eatenId) { hit = RITUAL_SCORE_MAP[i][1]; break }
     }
   }
+  // 不再累加 job.scores：分数已在启动时由 preflight 定稿（见 ritualMultiStartJob 的 finalScores）。
+  job.consumed.push({ x: bx, y: by, z: bz, id: eatenId, score: hit })
 
-  // 原第 31 行：不管认不认识这个方块，位置上的方块直接湮灭（不返还）
+  // 原第 31 行：不管认不认识这个方块，位置上的方块直接湮灭（不返还）。
+  // 现在失败有兜底：结算不命中时 ritualRefund 按 job.consumed 原位返还。
   ritualSetBlock(server, job.dim, bx, by, bz, 'minecraft:air')
+}
+
+// 结算失败 → 把 ritualConsume 吞掉的方块按原位放回去。
+// 原位若已被玩家/其它机制放上新方块：先 setblock air destroy 把占位方块破坏掉（掉落，
+// 不会静默吞掉），再 setblock 放回原材料；两步都只用本仓已验证的 setblock 基础写法。
+function ritualRefund (server, job) {
+  var n = 0
+  for (var i = 0; i < job.consumed.length; i++) {
+    var c = job.consumed[i]
+    if (!c || !c.id || c.id === 'minecraft:air') continue
+    var cur = ritualBlockIdAt(server, job.dim, c.x, c.y, c.z)
+    if (cur === null) continue   // 该格区块读不到，保守跳过（不盲写，避免把别处方块塞错）
+    var base = 'execute in ' + job.dim + ' run setblock ' + c.x + ' ' + c.y + ' ' + c.z + ' '
+    try {
+      if (cur !== 'minecraft:air') server.runCommandSilent(base + 'minecraft:air destroy')
+      server.runCommandSilent(base + c.id)
+      n++
+    } catch (err) {
+      console.warn('[ShrineRitual] 返还失败 @' + c.x + ',' + c.y + ',' + c.z + ' ' + c.id + ': ' + err)
+    }
+  }
+  return n
 }
 
 // 原 sequence:15-27：完成音效 + 7 条配方
 function ritualResolve (server, job) {
   var at = ritualAt(job)
+
+  // ★ 结算前复核：
+  //   ① 分数用启动时 preflight 定稿的 finalScores —— 8 个方位此时已被吞成 air，
+  //      重扫必然全 0；定稿分数也保证「重复启动 / 中途多放」不会让分数漂移。
+  //   ② 中心方块读当前真实 id（演出期间可能被玩家敲掉/换掉）。
+  //   ③ job.consumed 是逐秒吞材料时记下的真实方块 id：若有人中途改动了某个方位，
+  //      真实累计分数会与定稿分数不一致 → 判定失败并返还，不硬凑产出。
+  var finalScores = job.finalScores || job.scores
+  var realScores = ritualNewScores()
+  for (var ci = 0; ci < job.consumed.length; ci++) {
+    var s = job.consumed[ci].score
+    if (s) realScores[s] = realScores[s] + 1
+  }
+  var keys = Object.keys(finalScores)
+  var tampered = false
+  for (var ki = 0; ki < keys.length; ki++) {
+    if (realScores[keys[ki]] !== finalScores[keys[ki]]) { tampered = true; break }
+  }
+  var centerNow = ritualBlockIdAt(server, job.dim, job.bx, job.by, job.bz)
+  var matched = tampered ? null : ritualMatchRecipe(centerNow, finalScores)
+  if (matched === null) {
+    var n = ritualRefund(server, job)
+    ritualTellNear(server, job.dim, job.bx, job.by, job.bz,
+      '⟢ 仪式未完成：' + (tampered ? '材料在仪式过程中被改动' : '材料与配方不匹配') +
+      '，已原位返还 ' + n + ' 个方块（材料没有损失）')
+    console.warn('[ShrineRitual] 结算未命中 @' + job.bx + ',' + job.by + ',' + job.bz +
+      ' (tampered=' + tampered + ') → 返还 ' + n + ' 个方块')
+    return
+  }
+
   server.runCommandSilent(at + ' playsound malum:ritual_completed master @a ~ ~ ~ 30 0')
   server.runCommandSilent(at + ' playsound untagged_mobs:misc.mutate master @a ~ ~ ~ 1 0')
   server.runCommandSilent(at + ' particle dust_color_transition 1 0 0 5 0 0 0 ~ ~ ~ 0.5 0.5 0.5 0 20 force')
 
-  for (var i = 0; i < RITUAL_RECIPES.length; i++) {
-    var r = RITUAL_RECIPES[i]
-    if (!ritualBlockIs(server, job.dim, job.bx, job.by, job.bz, r.center)) continue
-    if (!ritualNeedMet(job, r.need)) continue
-
-    if (r.out) {
-      ritualSetBlock(server, job.dim, job.bx, job.by, job.bz, r.out)
-    }
-    if (r.effect) {
-      server.runCommandSilent(at + ' run function ' + r.effect)
-    }
+  // 命中配方 → 材料正常湮灭（不返还）。只执行匹配到的那一条，避免同中心多配方互相顶掉。
+  if (matched.out) {
+    ritualSetBlock(server, job.dim, job.bx, job.by, job.bz, matched.out)
+  }
+  if (matched.effect) {
+    server.runCommandSilent(at + ' run function ' + matched.effect)
   }
 }
 
