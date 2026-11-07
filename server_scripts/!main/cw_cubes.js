@@ -1346,7 +1346,13 @@ const C4_SEED_DIMS = {
   128: 'hexahedron:alpha_islands',
   // 原包 ticket_selection 的两个特殊分支：eye = 999.. → the_edge_of_reality，infinite = ..-999 → overworld
   999: 'hexahedron:the_edge_of_reality',
-  '-999': 'minecraft:overworld'
+  // ⚠ 这里是 hexahedron:overworld（原包里自定义的"假主世界"副本，见
+  //   data/hexahedron/dimension/overworld.json：minecraft:noise + overworld settings
+  //   + 7593 条 multi_noise biome），不是 minecraft:overworld。
+  //   原作 ticket_overworld.mcfunction:6-7 明确 set_portal_destination hexahedron:overworld。
+  //   写错成 minecraft:overworld 会把玩家送回真·主世界（出生点那套笼子所在维度），
+  //   落点/房间/遗迹全都不对。
+  '-999': 'hexahedron:overworld'
 }
 
 // 固定落点 core y（仅用于「高度图不可用 / 没有连续地表 / 天花板世界」的维度；
@@ -1365,7 +1371,10 @@ const C4_DIM_Y = {
   //   所以 core 必须 >= 105 才能让整个房间（含地板）浮在空气层里；
   //   原值 100 会让房间下半截 5 层埋进实心虚空方块，玩家穿门后被堵死、看不到房间。
   'hexahedron:the_edge_of_reality': 105,  // = 97 + 8（房间 Y0 正好贴空气层）
-  'minecraft:overworld': 100               // 256 层 filling，靠 fill 挖房间，必须保持 100
+  // 只服务真·主世界（出生笼所在维度）。落点 100 与出生笼/基地基准对齐，别改。
+  // 注意：infinite 算符的 -999 去的是 hexahedron:overworld（自定义副本），
+  //       那个维度有正常地表、走 heightmap +9，【不要】在这里给它加固定 y。
+  'minecraft:overworld': 100
 }
 
 // ---------------------------------------------------------------------------- 三格插槽（原包 runtime_effects）
@@ -1664,6 +1673,17 @@ function c4CheckDest(server, slot, idName, d, dx, dy, dz, attempt, cb) {
   let fwdAll = 0, fwdOwn = 0
   try { fwdAll = c4PortalsInDim(server, 'minecraft:overworld', tp.x, tp.y, tp.z, 240).length } catch (e2) {}
   try { fwdOwn = c4CountFaceDoors(server, tp.x, tp.y, tp.z, 240) } catch (e3) {}
+  // ★ fwdOwn 依赖 cw_face_* tag，而 IP 改完 destination 会重建门实体、把 tag 弄丢。
+  //   数量不足时先补一次 tag 再数，避免把"tag 丢了"误判成"门没指成功"。
+  try {
+    let need = c4HoleOpen(slot) ? 5 : 6
+    if (fwdOwn < need) {
+      c4SyncDoorTags(server, 'minecraft:overworld', tp.x, tp.y, tp.z,
+        { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }, slot, idName, false, 240)
+      fwdOwn = c4CountFaceDoors(server, tp.x, tp.y, tp.z, 240)
+      fwdAll = c4PortalsInDim(server, 'minecraft:overworld', tp.x, tp.y, tp.z, 240).length
+    }
+  } catch (eFix) { console.warn('[C4] 校验前补 tag 失败: ' + eFix) }
   // 隧道打开时目的地那扇反向 down 门会被清掉 → 只要求 5 扇反向门
   let needRev = c4HoleOpen(slot) ? 5 : 6
   if (rev >= needRev) { cb(true, rev, fwdOwn, fwdAll); return }
@@ -1951,7 +1971,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
       + '（门已指向但房间缺失，回滚到起点，不落库）')
     try { c4TellTeam(server, slot, c4t('cw.warp.abort')) } catch (eT) {}
     try { c4BarTeam(server, slot, '跃迁失败：目的地房间未生成，已回到起点') } catch (eB) {}
-    try { c4RestoreHome(server, slot, idName) } catch (e2) {}
+    try { c4RestoreHome(server, slot, idName, d) } catch (e2) {}
     c4WarpEnd(server, slot, label, job)
     return
   }
@@ -2097,6 +2117,14 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
             n = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(d.dim), dx, dy, dz, false, d.dim, idName, ext0, false, slot)
           } catch (eF) { n = 0 }
           try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { console.warn('[C4] 反向门失败: ' + e) }
+          // ★ 关键：c4Retarget 是「先补 tag、再 setPortalTransformation」，而 IP 在
+          //   transformation 变更后会【重建门实体】→ 新实体上没有 cw_face_* tag。
+          //   于是紧接着校验会数到 fwdOwn=0~2 → 误判"目的地未就绪" → 中止并回滚，
+          //   这就是"门明明指过去了却报跃迁终止"的根因。
+          //   改完门必须【再补一次 tag】才校验。
+          try { c4SyncDoorTags(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext0, slot, idName, false, 240) } catch (eSt) {
+            console.warn('[C4] 指门后补 tag 失败: ' + eSt)
+          }
           // 隧道打开时 down 面本来就该缺席：只要求 5 面，否则会误报"跃迁中止"
           let needFwd = c4HoleOpen(slot) ? 5 : 6
           c4CheckDest(server, slot, idName, d, dx, dy, dz, 0, (ok, rev, fwdOwn, fwdAll) => {
@@ -2105,7 +2133,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
                 + '（在场门=' + fwdAll + '） → 回滚到私有笼子')
               c4TellTeam(server, slot, c4t('cw.warp.abort'))
               try { c4BarTeam(server, slot, '跃迁失败：目的地未就绪，已回到起点') } catch (e7) {}
-              try { c4RestoreHome(server, slot, idName) } catch (e2) {}
+              try { c4RestoreHome(server, slot, idName, d) } catch (e2) {}
               c4WarpEnd(server, slot, label, job)
               return
             }
@@ -2122,14 +2150,14 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
         } catch (e) {
           console.warn('[C4] 剧场版 c/d 失败: ' + e)
           c4TellTeam(server, slot, c4t('cw.warp.abort'))
-          try { c4RestoreHome(server, slot, idName) } catch (e2) {}
+          try { c4RestoreHome(server, slot, idName, d) } catch (e2) {}
           c4WarpEnd(server, slot, label, job)
         }
       })
     } catch (e) {
       console.warn('[C4] 自主跃迁失败: ' + e)
       c4TellTeam(server, slot, c4t('cw.warp.abort'))
-      try { c4RestoreHome(server, slot, idName) } catch (e2) {}
+      try { c4RestoreHome(server, slot, idName, d) } catch (e2) {}
       c4WarpEnd(server, slot, label, job)
     }
   }
@@ -2191,9 +2219,28 @@ function c4ClampCoreY(server, dimId, cy, ext) {
 }
 
 // 跃迁失败：把 6 扇门指回本队私有基岩笼子（否则门会停在数据包随手挑的 dry_ocean 之类维度，看出去是虚空）
-function c4RestoreHome(server, slot, idName) {
+// 回滚到私有笼子。dest（可选）={dim,x,y,z}：本次已指向/已造过反向门的目的地。
+// 中止时目的地那一侧的反向门不会自己消失（c4MakeReverse 在校验之前就造了），
+// 必须在这里顺手清掉，否则会留下一批"名不对实"的错误门，玩家能看到/走进去。
+function c4RestoreHome(server, slot, idName, dest) {
   let cx = c4CubeX(slot) + 0.5, cz = C4_Z + 0.5
   let CAGE = 'hexahedron:bedrock_bottom'
+  // 清目的地侧残留门：按坐标 + 只杀非 main_cube 的门（不动别队正向门/大厅门）。
+  // 区块还没加载时 kill 会静默失效，所以先瞬时预载。
+  if (dest && dest.dim && dest.x !== undefined) {
+    try {
+      let ddim = String(dest.dim)
+      let dpx = Number(dest.x) + 0.5, dpy = Number(dest.y) + 0.5, dpz = Number(dest.z) + 0.5
+      c4PreloadNear(server, ddim, Number(dest.x), Number(dest.z), 400, 'restore-kill-rev slot' + slot)
+      server.scheduleInTicks(20, () => {
+        try {
+          server.runCommandSilent('execute in ' + ddim + ' positioned ' + dpx + ' ' + dpy + ' ' + dpz
+            + ' run kill @e[type=immersive_portals:portal,name=!main_cube,distance=..100,tag=!cw_lobby]')
+          console.info('[C4] 回滚：已清理目的地残留门 ' + ddim + ' @' + dest.x + ',' + dest.y + ',' + dest.z)
+        } catch (eK) { console.warn('[C4] 回滚清残留门失败: ' + eK) }
+      })
+    } catch (eP) { console.warn('[C4] 回滚清残留门预载失败: ' + eP) }
+  }
   let h = c4TeamOfSlot(slot)
   let ext = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 私有笼子固定 17³，与门/反向门一致（旧 ext 不参与）
   let fx = Math.floor(cx), fz = Math.floor(cz)
@@ -2774,6 +2821,17 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   // /cube unholeme：对称命令——只还原不打开（隧道本就关闭时仅提示，不动结构）
   root.then(cmdRoot.literal('unholeme').executes(ctx => { c4CmdHoleMe(ctx, false); return 1 }))
 
+  // /cube resetdoor [slot]：玩家自助重置传送门（半径 kill 清干净 → 重建 6 门）。
+  // 不带 slot = 自己队伍的槽位；带 slot 需是本人队伍或 OP（c4CanOperate 内校验）。
+  root.then(cmdRoot.literal('resetdoor')
+    .executes(ctx => { c4CmdResetDoor(ctx, undefined); return 1 })
+    .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
+      c4CmdResetDoor(ctx, IAT.getInteger(ctx, 'slot')); return 1
+    })))
+
+  // /cube help：分角色列出命令（玩家版所有人可见；OP 版含 admin 命令树）
+  root.then(cmdRoot.literal('help').executes(ctx => { c4CmdHelp(ctx); return 1 }))
+
   // 管理命令统一挂到 /cube admin（权限 4）；root 重新指向 admin 后，
   // 下面所有 root.then(...) 都会注册到 admin 子树里。
   let cubeRoot = root
@@ -3010,6 +3068,22 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
       .then(cmdRoot.argument('slot', IAT.integer(0)).executes(ctx => {
         c4CmdDestShow(ctx, IAT.getInteger(ctx, 'slot')); return 1
       }))))
+
+  // /cube admin portal <slot> <dim> [x y z] —— 6 扇门一次性指向指定维度（省坐标=用已有落点/自动选点）
+  root.then(cmdRoot.literal('portal').requires(src => src.hasPermission(4))
+    .then(cmdRoot.argument('slot', IAT.integer(0))
+      .then(cmdRoot.argument('dim', SAT.string())
+        .executes(ctx => {
+          c4CmdPortal(ctx, IAT.getInteger(ctx, 'slot'), String(SAT.getString(ctx, 'dim')))
+          return 1
+        })
+        .then(cmdRoot.argument('x', IAT.integer(-30000000, 30000000))
+          .then(cmdRoot.argument('y', IAT.integer(-30000000, 30000000))
+            .then(cmdRoot.argument('z', IAT.integer(-30000000, 30000000)).executes(ctx => {
+              c4CmdPortal(ctx, IAT.getInteger(ctx, 'slot'), String(SAT.getString(ctx, 'dim')),
+                IAT.getInteger(ctx, 'x'), IAT.getInteger(ctx, 'y'), IAT.getInteger(ctx, 'z'))
+              return 1
+            })))))))
 
   // 缩小版：/cube admin bind <slot> <x> <y> <z> —— 按钮锚点（唯一真源），重定义 6 面门生成坐标
   root.then(cmdRoot.literal('bind').requires(src => src.hasPermission(4))
@@ -3503,19 +3577,25 @@ function c4CmdDoors(ctx, slot) {
   let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 传送器固定 17³
   let tp = c4TeleCore(slot)
   let chunks = c4DoorPreload(server, ext0, tp)
-  // 只杀本台的门（portal 实体），绝不碰方块/别人的门/大厅门
-  let killed = 0
+  // 只杀本台的门（portal 实体），绝不碰方块/别人的门/大厅门。
+  // 判定 = 带本台 tag 【或】落在传送器盒内（无 tag 孤儿门，跃迁中止时常见，必须清得掉）。
+  let killed = 0, orphans = 0
   try {
+    let R2 = 12 * 12   // 传送器 21³ 相对核心 ±10.5，留余量；槽位间距 4000 不会误伤邻台
     c4All(server).forEach(e => {
       try {
         if (!c4IsPortal(e)) return
         if (c4DimOf(e) !== 'minecraft:overworld') return
         if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
-        if (!(c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot))) return
+        let own = c4HasTag(e, 'cw_id_' + cubeId) || c4HasTag(e, 'cw_slot' + slot)
+        let inBox = c4Dist2(e.x, e.y, e.z, tp.x, tp.y, tp.z) <= R2
+        if (!own && !inBox) return
         e.discard(); killed++
+        if (!own) orphans++
       } catch (err) {}
     })
   } catch (e1) {}
+  if (orphans > 0) console.info('[C4] doors：清掉传送器内无 tag 孤儿门 ' + orphans + ' 扇（slot' + slot + '）')
   let made = 0
   try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e2) { console.warn('[C4] 造门失败: ' + e2) }
 
@@ -3724,6 +3804,23 @@ function c4Ext(cube) {
     py: Math.max(0, Number(e.py) | 0)
   }
 }
+// c4BuildRoom 自己会往房间里放的方块 —— clearMode='all' 只清这些，绝不碰玩家方块。
+// 与函数内实际 setblock/fill 的 id 必须保持一致（改动任何一处都要同步这里）。
+const C4_ROOM_OWN_BLOCKS = [
+  'kubejs:warping_frame',            // 四角立柱 + 上下边框
+  'kubejs:warping_frame_platform',   // 地板
+  'kubejs:warping_frame_slab',       // 旧版地板半砖（兼容）
+  'kubejs:warping_vent',             // 排气孔
+  'kubejs:warping_controls',         // 操控台
+  'kubejs:warping_interface',        // 接口
+  'kubejs:warping_disc_drive',       // 光盘驱动器
+  'kubejs:launch_button',            // 启动按钮
+  'kubejs:launch_button_pressed',    // 按下态按钮（复位残留）
+  'kubejs:warping_interface_running',// 运行态接口（复位残留）
+  'kubejs:hexahedron_filling',       // 目的地隐形填充方块
+  'minecraft:light',                 // 隐形光源
+  'minecraft:structure_void'         // 外壳
+]
 function c4RoomBox(cx, cy, cz, ext) {
   // Y 必须跟着核心走：原来写死 97..113 只适合主世界的立方体，
   // 目的地核心在别的 y（地表高度）时，笼子会建在 y=97 —— 和门差出几十格，就是你看到的错位。
@@ -3793,9 +3890,15 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   // oldExt 参数保留只为兼容旧调用点，已不再使用。
   let mode = clearMode || 'all'
   if (mode === 'all') {
+    // ⚠ 原来是无条件 `fill ... minecraft:air`：会把玩家在舱内/基地里的箱子、机器、
+    //   储物全部静默清掉且不掉落（ext reset / build force 丢东西就是这个原因）。
+    //   改成【只清本系统自己放的方块】——按 id 精确 replace，玩家方块一格都不动。
+    //   分层清（每 8 格一块）避免单条 fill 超过 32768 上限。
     for (let yy = b.Y0; yy <= b.Y1; yy += 8) {
       let y2 = Math.min(yy + 7, b.Y1)
-      run(`fill ${b.X0} ${yy} ${b.Z0} ${b.X1} ${y2} ${b.Z1} minecraft:air`)
+      for (let ci = 0; ci < C4_ROOM_OWN_BLOCKS.length; ci++) {
+        run(`fill ${b.X0} ${yy} ${b.Z0} ${b.X1} ${y2} ${b.Z1} minecraft:air replace ${C4_ROOM_OWN_BLOCKS[ci]}`)
+      }
     }
   }
   if (slot !== undefined && slot !== null && slot >= 0) {
@@ -4189,6 +4292,27 @@ function c4KillCubeDoors(server, slot, cubeId, cx, cy, cz, radius) {
       } catch (err) {}
     })
   } catch (e3) {}
+
+  // ★ 兜底清「无 tag 的孤儿门」：跃迁中止时 complete_bi_way_portal 可能在传送器内部
+  //   留下还没来得及打 tag 的门（tag 是 5/15/40/80/120t 轮询补的，中止可能早于它）。
+  //   这类门 own/near 都不成立，命令行 kill 又常被 IP 反复注册回来 → 表现为
+  //   "门卡在立方体中间且清不掉"。这里按【传送器盒】确定性判定（完全不看 tag），直接 discard。
+  try {
+    let core = c4TeleCore(slot)
+    let R2 = 12 * 12   // 外壳 21³ 相对核心 ±10.5，留 1.5 余量；槽位间距 4000，不会误伤邻台
+    let orphans = 0
+    c4All(server).forEach(e => {
+      try {
+        if (!c4IsPortal(e)) return
+        if (c4DimOf(e) !== 'minecraft:overworld') return
+        if (c4HasTag(e, 'cw_lobby') || c4HasTag(e, 'cw_link') || c4HasTag(e, 'cw_face_link')) return
+        if (c4Dist2(e.x, e.y, e.z, core.x, core.y, core.z) > R2) return
+        try { e.discard(); n++; orphans++ } catch (e1) { try { e.kill(); n++; orphans++ } catch (e2) {} }
+      } catch (err) {}
+    })
+    if (orphans > 0) console.info('[C4] 清掉传送器内孤儿门 ' + orphans + ' 扇（slot' + slot + '，无 tag 兜底）')
+  } catch (eOr) { console.warn('[C4] 孤儿门清理失败: ' + eOr) }
+
   // 反向门（目的地侧）：旧笼子/旧目的地残留的也一起清；随后 c4MakeReverse 会在当前目的地重建
   try {
     c4All(server).forEach(e => {
@@ -4728,6 +4852,221 @@ function c4CmdDestShow(ctx, slot) {
     c4Reply(ctx, '  ' + k + ' @' + dd.x + ',' + dd.y + ',' + dd.z + '（房间' + state + '）')
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// /cube admin portal <slot> <dim> [x y z]  —— 把整台 6 扇门指向指定维度的指定坐标
+// 与既有命令的关系（避免重复造轮子）：
+//   · dest set  只写落点记录，不动门
+//   · face      只改【单面】门，且落点写死 C4_CORE_Y
+//   · portal    一次改【全部 6 面】+ 写落点记录 + 保证房间在，是最常用的调试入口
+// dim 支持：完整 id（hexahedron:dry_ocean）/ seed 序号（999）/ 维度名末段（dry_ocean）
+// 省略 x y z 时：优先用 dests 里已有的落点；没有就按地表（c4ResolveY）自动选点。
+// ════════════════════════════════════════════════════════════════════════════
+function c4CmdPortal(ctx, slot, dimArg, px, py, pz) {
+  let server = ctx.source.server
+  let dim = c4ResolveDimArg(dimArg)
+  if (dim === null) {
+    c4Reply(ctx, '无法识别维度：' + dimArg + '（可用完整 id / seed 序号 / 维度名末段）')
+    return
+  }
+  let info = c4TeamOfSlot(slot)
+  if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+  let cubeId = info.cube.id || ('cube' + slot)
+
+  // 落点：显式坐标 > dests 已有 > 按该维度地表自动选
+  let dest = null
+  if (px !== undefined && px !== null) {
+    dest = { dim: dim, x: Math.floor(Number(px)), y: Math.floor(Number(py)), z: Math.floor(Number(pz)) }
+  } else {
+    let prev = c4DestOf(info.cube, dim)
+    if (prev) {
+      dest = { dim: dim, x: Math.floor(Number(prev.x)), y: Math.floor(Number(prev.y)), z: Math.floor(Number(prev.z)) }
+    } else {
+      let auto = c4PickDestForSeed(server, slot, c4SeedOfDim(dim))
+      dest = { dim: dim, x: Math.floor(auto.x), y: Math.floor(auto.y), z: Math.floor(auto.z) }
+    }
+  }
+  if (!c4DestValid(server, dest)) { c4Reply(ctx, '目的地不合法（维度不存在/超出可建高度）'); return }
+
+  let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
+  let tp = c4TeleCore(slot)
+  let dx = dest.x + 0.5, dy = dest.y + 0.5, dz = dest.z + 0.5
+
+  // 1) 瞬时预载起点与目标（fill / 建门都要求区块已加载）
+  try { c4DoorPreload(server, ext0, tp) } catch (e0) {}
+  try { c4PreloadNear(server, dim, dest.x, dest.z, 600, 'portal-cmd slot' + slot) } catch (eP) {}
+
+  // 2) 保证目的地房间存在（缺了就补建；edge 维度顺带补遗迹）
+  let roomOK = false
+  try { roomOK = c4DestRoomExists(server, dest) } catch (eR) { roomOK = false }
+  if (!roomOK) {
+    try {
+      dest.y = c4ResolveY(server, dim, dest.x, dest.z)
+      dy = dest.y + 0.5
+      c4BuildRoom(server, dim, dx, dy, dz, ext0, true)
+      roomOK = true
+    } catch (eB) { console.warn('[C4] portal 命令建房失败: ' + eB) }
+  }
+
+  // 3) 指门（6 面一次性）
+  let n = 0
+  try { n = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(dim), dx, dy, dz, false, dim, cubeId, ext0, false, slot) } catch (eF) {
+    console.warn('[C4] portal 命令指门失败: ' + eF)
+  }
+  // 4) 反向门 + 落点记录
+  try { c4MakeReverse(server, slot, dim, dx, dy, dz, cubeId) } catch (eR2) {}
+  try {
+    c4DestSet(info.cube, dim, dest.x, dest.y, dest.z)
+    info.cube.curDestDim = dim
+    c4Save()
+  } catch (eS) {}
+
+  console.info('[C4] portal 命令 slot=' + slot + ' → ' + dim + ' @' + dest.x + ',' + dest.y + ',' + dest.z
+    + ' 指门=' + n + ' 房间=' + (roomOK ? 'OK' : '未确认'))
+  c4Reply(ctx, '已把 ' + slot + ' 的 6 扇门指向 ' + dim + ' @' + dest.x + ',' + dest.y + ',' + dest.z
+    + '（指门 ' + n + '，房间' + (roomOK ? '已就绪' : '待确认') + '）')
+}
+
+// 维度 id → 对应的 seed（找不到就回退 0，用于 c4PickDestForSeed 的自动选点）
+function c4SeedOfDim(dim) {
+  let want = String(dim)
+  for (let k in C4_SEED_DIMS) {
+    if (String(C4_SEED_DIMS[k]) === want) return Number(k)
+  }
+  return 0
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// /cube resetdoor [slot]  —— 【不需要 admin】重置本队传送门
+// 权限：执行者必须是该队伍成员（c4CanOperate），或 OP。
+// 流程：按【传送器盒半径】kill 范围内全部门实体（真正清干净，含无 tag 孤儿门）→ 重建 6 门。
+//       这一步就是玩家遇到"门卡在立方体中间、清不掉"时的自助修复入口。
+// ════════════════════════════════════════════════════════════════════════════
+function c4CmdResetDoor(ctx, slotArg) {
+  let server = ctx.source.server
+  let p = c4SrcPlayer(ctx)
+  let slot = slotArg
+
+  // 没给 slot：用执行者自己的队伍槽位
+  if (slot === undefined || slot === null) {
+    if (!p) { c4Reply(ctx, '控制台执行请指定槽位：/cube resetdoor <slot>'); return }
+    let key = c4TeamKey(c4Team(p))
+    let cube = key ? c4CubeOfTeam(key) : null
+    if (!cube || cube.slot === undefined) { c4Reply(ctx, '你还没有绑定立方体'); return }
+    slot = Number(cube.slot)
+  }
+
+  let info = c4TeamOfSlot(slot)
+  if (!info || !info.cube) { c4Reply(ctx, '槽位 ' + slot + ' 没有登记'); return }
+  // 权限：本队成员或 OP（c4CanOperate 已实现该语义）
+  if (!c4CanOperate(ctx, slot)) { c4Reply(ctx, '这不是你的立方体（' + c4OwnerLabel(slot) + '）'); return }
+
+  let cubeId = info.cube.id || ('cube' + slot)
+  let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
+  let tp = c4TeleCore(slot)
+  try { c4DoorPreload(server, ext0, tp) } catch (e0) {}
+
+  // ① 半径 kill：范围内【全部】IP 门实体（不做 tag 过滤 —— 中止残留的孤儿门没有 tag）。
+  //    先预载，保证区块内的实体都进内存，kill 才能选中。
+  let R = 24   // 传送器 21³ 相对核心 ±10.5；给 24 留足余量（槽位间距 4000，不会误伤邻台）
+  let killed = 0
+  try {
+    let before = c4PortalsInDim(server, 'minecraft:overworld', tp.x, tp.y, tp.z, R).length
+    server.runCommandSilent('execute in minecraft:overworld positioned ' + tp.x + ' ' + tp.y + ' ' + tp.z
+      + ' run kill @e[type=immersive_portals:portal,distance=..' + R + ']')
+    killed = before
+  } catch (eK) { console.warn('[C4] resetdoor kill 失败: ' + eK) }
+
+  // ② KubeJS 层再兜一次 discard：命令行 kill 对 IP 门常被重新注册，discard 才可靠
+  let discarded = 0
+  try {
+    let R2 = R * R
+    c4All(server).forEach(e => {
+      try {
+        if (!c4IsPortal(e)) return
+        if (c4DimOf(e) !== 'minecraft:overworld') return
+        if (c4Dist2(e.x, e.y, e.z, tp.x, tp.y, tp.z) > R2) return
+        try { e.discard(); discarded++ } catch (e1) { try { e.kill(); discarded++ } catch (e2) {} }
+      } catch (err) {}
+    })
+  } catch (eD) { console.warn('[C4] resetdoor discard 失败: ' + eD) }
+
+  // ③ 等 5t 让实体真正移除，再重建 6 门并指回原落点
+  let g = C4_GEN
+  server.scheduleInTicks(5, () => {
+    if (g !== C4_GEN) return
+    let made = 0
+    try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e1) { console.warn('[C4] resetdoor 建门失败: ' + e1) }
+    // 指回当前维度落点
+    let seed = 0
+    try { seed = c4ReadSeed(server, slot) } catch (e2) { seed = 0 }
+    let dest = c4DestOf(info.cube, C4_SEED_DIMS[seed] || C4_SEED_DIMS[0])
+    let rDim = dest ? String(dest.dim) : 'hexahedron:bedrock_bottom'
+    let rx = dest ? Number(dest.x) + 0.5 : c4BaseCore(slot).x
+    let ry = dest ? Number(dest.y) + 0.5 : c4BaseCore(slot).y
+    let rz = dest ? Number(dest.z) + 0.5 : c4BaseCore(slot).z
+    try { c4PreloadNear(server, rDim, rx, rz, 400, 'resetdoor-rev slot' + slot) } catch (e3) {}
+    let aimed = 0
+    try { aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(rDim), rx, ry, rz, false, rDim, cubeId, ext0, false, slot) } catch (e4) {}
+    server.scheduleInTicks(20, () => {
+      if (g !== C4_GEN) return
+      try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
+      try { c4MakeReverse(server, slot, rDim, rx, ry, rz, cubeId) } catch (e6) {}
+    })
+    console.info('[C4] resetdoor slot=' + slot + ' 清理=' + killed + '/discard=' + discarded
+      + ' 重建=' + made + ' 指向=' + aimed + ' → ' + rDim)
+    c4Reply(ctx, '已重置 ' + slot + ' 的传送门：清 ' + killed + '（discard ' + discarded + '）'
+      + ' / 建 ' + made + ' / 指 ' + aimed + ' → ' + rDim)
+  })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// /cube help —— 分角色列出命令，并标注与其它命令重复/已被取代的项
+// ════════════════════════════════════════════════════════════════════════════
+function c4CmdHelp(ctx) {
+  let p = c4SrcPlayer(ctx)
+  let isOp = !!(p && p.op)
+  let lines = []
+  lines.push('=== 玩家可用 ===')
+  lines.push('/cube info                    全局状态/我的立方体')
+  lines.push('/cube home                    回本队基地')
+  lines.push('/cube spawn                   回出生点')
+  lines.push('/cube holeme  / unholeme      开关自家舱底隧道')
+  lines.push('/cube resetdoor [slot]        重置传送门（本队可用，清干净后重建）')
+  lines.push('/cube help                    本帮助')
+  if (isOp) {
+    lines.push('')
+    lines.push('=== OP：传送门（最常用）===')
+    lines.push('/cube admin portal <slot> <维度> [x y z]   6 门指向该维度（省坐标=用已有落点/自动选点）')
+    lines.push('/cube admin portals <slot>                 查看 6 扇门各自指向')
+    lines.push('/cube admin doors <slot>                   只重建本台 6 门（不动方块）')
+    lines.push('/cube admin dest show <slot>               查看固定落点表')
+    lines.push('/cube admin dest set <slot> <维度> <x y z> 只写落点记录（不动门）')
+    lines.push('/cube admin cleardest <slot> <维度|all>    删落点记录，下次重新分配')
+    lines.push('')
+    lines.push('=== OP：基地/舱体 ===')
+    lines.push('/cube admin build <slot> [force]   重建立方体（force=清内腔，只清系统方块）')
+    lines.push('/cube admin rebuild <slot>         按 cells 重算外边界')
+    lines.push('/cube admin expand <slot> <面>     扩建基地')
+    lines.push('/cube admin tele <slot> <y>        只搬传送器')
+    lines.push('/cube admin relocate <slot> <x y z> 整舱搬迁')
+    lines.push('/cube admin bind <slot> <x y z>    重绑按钮原点')
+    lines.push('/cube admin ext reset <slot>       ext 清零 + 重建舱体')
+    lines.push('')
+    lines.push('=== OP：诊断/维护 ===')
+    lines.push('/cube admin api / test / near      API 能力 / 自检 / 附近门参数')
+    lines.push('/cube admin orphans / adopt        孤儿车厢 / 接管')
+    lines.push('/cube admin flush                  清跃迁队列')
+    lines.push('/cube admin migrateall / borderfix / pruneup   旧存档迁移/修补')
+    lines.push('')
+    lines.push('=== 已废弃/重复（保留兼容，勿再用）===')
+    lines.push('/cube admin face <slot> <面> <维度>   → 用 portal（face 只改单面且落点写死）')
+    lines.push('/cube admin ipcfg on                  → 调试开关，正常不用')
+    lines.push('/cube admin cleardest                 → 与 dest show 配合，通常无需单独用')
+  }
+  lines.forEach(s => c4Reply(ctx, s))
+}
+
 // /cube admin bind <slot> <x> <y> <z>：写 cube.btn，清旧 6 面门，按新按钮原点重建 6 门并校验
 function c4CmdBind(ctx, slot, x, y, z) {
   let server = ctx.source.server
