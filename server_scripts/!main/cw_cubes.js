@@ -48,6 +48,7 @@ const C4_Y_MAX = C4_TELE_Y + C4_TELE_HALF      // 197.0
 // 立方体登记跟着【存档】走（world/），不要放 config/：删档 = 重新开始，不会带着幽灵立方体
 const C4_CFG = 'world/cubarper-cubes.json'
 const C4_STATE_PATH = 'world/cubarper-state.json'
+const C4_LOG_CFG = 'world/cubarper-log.json'
 const C4_DEST_MIN_SEP = 1200   // 必须 > 1000：原包 hex_anchor 的复用半径是 1000，小于它就会偷到别人的落点
 const C4_DEST_NUDGE = 1024     // 撞车 → 单调外移（+x 方向，第 i 次偏移 i*1024）
 const C4_DEST_JITTER = 768     // 兼容旧代码的旧参数（新逻辑走下面的环形随机）
@@ -232,7 +233,7 @@ function c4All(server) {
     let it = server.entities.iterator()
     while (it.hasNext()) out.push(it.next())
   } catch (e) {
-    if (!C4_WARNED.ent) { C4_WARNED.ent = true; console.warn('[C4] server.entities 不可用: ' + e) }
+    if (!C4_WARNED.ent) { C4_WARNED.ent = true; c4log('warn', 'server.entities 不可用: ' + e) }
   }
   return out
 }
@@ -346,8 +347,8 @@ function c4BtnLog(ok, clicker, slot, reason) {
   try { let t = c4Team(clicker); team = t ? String(c4TeamKey(t)) : '无' } catch (e) {}
   let info = slot === null ? null : c4TeamOfSlot(slot)
   let label = (info && info.cube) ? info.cube.name : '-'
-  if (ok) console.info('[C4] 按钮允许：' + who + ' 队伍=' + team + ' → slot ' + slot + '《' + label + '》')
-  else console.info('[C4] 按钮拒绝：' + who + ' 队伍=' + team + ' → slot ' + slot + '《' + label + '》 原因=' + reason)
+  if (ok) c4log('info', '按钮允许：' + who + ' 队伍=' + team + ' → slot ' + slot + '《' + label + '》')
+  else c4log('info', '按钮拒绝：' + who + ' 队伍=' + team + ' → slot ' + slot + '《' + label + '》 原因=' + reason)
 }
 
 // outer_core 是数据包每次跃迁 summon 的"目的地核心"，原包不清它 → 会越积越多，
@@ -376,10 +377,10 @@ function c4Ftb() {
     if (api.getManager() === null || !api.isManagerLoaded()) { C4_FTB.tried = false; return C4_FTB }
     C4_FTB.api = api
     C4_FTB.ok = true
-    console.info('[C4] FTB Teams 已接入')
+    c4log('info', 'FTB Teams 已接入')
   } catch (e) {
     C4_FTB.ok = false
-    console.warn('[C4] 未接入 FTB Teams: ' + e)
+    c4log('warn', '未接入 FTB Teams: ' + e)
   }
   return C4_FTB
 }
@@ -465,7 +466,7 @@ function c4Norm(v) {
         let k = String(it.next())
         try { o[k] = c4Norm(v.get(k)) } catch (e1) {}
       }
-    } catch (e2) { console.warn('[C4] 读库 Map 遍历失败: ' + e2) }
+    } catch (e2) { c4log('warn', '读库 Map 遍历失败: ' + e2) }
     return o
   }
   // java.util.List（JsonIO 的数组）
@@ -474,7 +475,7 @@ function c4Norm(v) {
     try {
       let n = Number(v.size())
       for (let i = 0; i < n; i++) a.push(c4Norm(v.get(i)))
-    } catch (e3) { console.warn('[C4] 读库 List 遍历失败: ' + e3) }
+    } catch (e3) { c4log('warn', '读库 List 遍历失败: ' + e3) }
     return a
   }
   // 普通 JS 对象
@@ -496,7 +497,7 @@ function c4Db() {
   // 真要迁移老存档，手动把 config/cubarper-cubes.json 复制到 world/ 即可。
   if (!d || typeof d !== 'object') {
     // 文件不存在 = 新存档（可写）；解析失败 = 坏档（本会话拒绝写，避免把原文件覆盖成空库）
-    if (failed) console.warn('[C4] 库文件解析失败，本会话拒绝写库（先备份/修复 ' + C4_CFG + '）')
+    if (failed) c4log('warn', '库文件解析失败，本会话拒绝写库（先备份/修复 ' + C4_CFG + '）')
     d = {}
   }
   if (d.nextSlot === undefined) d.nextSlot = 1
@@ -534,7 +535,7 @@ function c4HealCubeNames() {
     let t = c4TeamByKey(k)
     let l = t ? c4TeamLabel(t) : ''
     if (l && l !== '队伍' && l.indexOf('#') < 0 && !/^[_\s]*$/.test(l)) {
-      console.info('[C4] 基地名自愈：' + n + ' → ' + l + '（槽位 ' + c.slot + '）')
+      c4log('info', '基地名自愈：' + n + ' → ' + l + '（槽位 ' + c.slot + '）')
       c.name = l; changed++
     }
   }
@@ -561,7 +562,7 @@ function c4PurgeLobbyPortals(server) {
       + ' run kill @e[type=immersive_portals:portal,distance=..24]'
     let n = 0
     try { n = Number(server.runCommandSilent(cmd)) } catch (e) { n = 0 }
-    if (n > 0) console.info('[C4] 出生大厅传送门清理: ' + n + ' 扇')
+    if (n > 0) c4log('info', '出生大厅传送门清理: ' + n + ' 扇')
     // 六面补屏障：只把空气换成屏障，不会覆盖台上已有的机器
     let fills = [
       'fill -8 97 -8 -8 113 8', 'fill 8 97 -8 8 113 8',
@@ -572,9 +573,9 @@ function c4PurgeLobbyPortals(server) {
     fills.forEach(f => {
       try { sealed += Number(server.runCommandSilent('execute in minecraft:overworld run ' + f + ' minecraft:barrier replace minecraft:air')) } catch (e) {}
     })
-    if (sealed > 0) console.info('[C4] 出生大厅补屏障: ' + sealed + ' 格')
+    if (sealed > 0) c4log('info', '出生大厅补屏障: ' + sealed + ' 格')
     return n
-  } catch (e) { console.warn('[C4] 大厅门清理失败: ' + e); return 0 }
+  } catch (e) { c4log('warn', '大厅门清理失败: ' + e); return 0 }
 }
 
 function c4TellTeam(server, slot, msg) {
@@ -616,6 +617,39 @@ function c4LoadState() {
   if (s && typeof s === 'object') C4_STATE.worldStarted = !!s.worldStarted
   return C4_STATE
 }
+
+// ---------------------------------------------------------------------------- 日志开关
+// 级别：0 = off（只留 error） / 1 = normal（默认：info + error） / 2 = verbose（全开）
+// 存在 world/ 里，跟随存档；/reload 后仍生效。
+// 用法：/cube admin log off | normal | verbose   （也接受 0/1/2、on）
+let C4_LOG_LEVEL = 1
+function c4LoadLogLevel() {
+  try {
+    let s = JsonIO.read(C4_LOG_CFG)
+    if (s && s.level !== undefined) {
+      let v = Number(s.level)
+      if (isFinite(v) && v >= 0 && v <= 2) C4_LOG_LEVEL = v | 0
+    }
+  } catch (e) {}
+  return C4_LOG_LEVEL
+}
+function c4SaveLogLevel() {
+  try { JsonIO.write(C4_LOG_CFG, { level: C4_LOG_LEVEL, savedAt: Date.now() }) } catch (e) {}
+}
+function c4LogLevelName(n) {
+  n = Number(n)
+  return n === 0 ? 'off' : (n === 2 ? 'verbose' : 'normal')
+}
+// 统一日志出口。所有 [C4] 日志都应走这里，避免 reload 后级别失效。
+function c4log(level, msg) {
+  let lv = (level === 'error') ? 3 : ((level === 'warn') ? 2 : 1)
+  // error 永远输出；warn 只在 verbose；info 在 normal/verbose
+  if (lv === 3) { try { console.error('[C4] ' + msg) } catch (e) {} return }
+  if (lv === 2 && C4_LOG_LEVEL < 2) return
+  if (lv === 1 && C4_LOG_LEVEL < 1) return
+  try { console.info('[C4] ' + msg) } catch (e) {}
+}
+function c4Verbose() { return C4_LOG_LEVEL >= 2 }
 function c4SaveState() {
   try { JsonIO.write(C4_STATE_PATH, { worldStarted: C4_STATE.worldStarted, savedAt: Date.now() }) } catch (e) {}
 }
@@ -647,16 +681,16 @@ function c4PreloadBox(server, dim, x0, z0, x1, z1, ttl, tag) {
   C4_PRELOAD_SEQ[key] = seq
   let n = (Math.floor((bx - ax) / 16) + 1) * (Math.floor((bz - az) / 16) + 1)
   try { server.runCommandSilent('execute in ' + d + ' run forceload add ' + ax + ' ' + az + ' ' + bx + ' ' + bz) }
-  catch (e) { console.warn('[C4] 预载失败 ' + (tag || '') + ': ' + e) }
+  catch (e) { c4log('warn', '预载失败 ' + (tag || '') + ': ' + e) }
   try {
     server.scheduleInTicks(t, () => {
       if (g !== C4_GEN) return   // 旧世代不 remove：避免 reload 后误删新世代刚加的
       if (Number(C4_PRELOAD_SEQ[key]) !== seq) return   // 同一矩形有更新的预载还在用 → 交给它释放
       try { delete C4_PRELOAD_SEQ[key] } catch (eD) {}
       try { server.runCommandSilent('execute in ' + d + ' run forceload remove ' + ax + ' ' + az + ' ' + bx + ' ' + bz) }
-      catch (e2) { console.warn('[C4] 预载释放失败 ' + (tag || '') + ': ' + e2) }
+      catch (e2) { c4log('warn', '预载释放失败 ' + (tag || '') + ': ' + e2) }
     })
-  } catch (e3) { console.warn('[C4] 预载定时失败 ' + (tag || '') + ': ' + e3) }
+  } catch (e3) { c4log('warn', '预载定时失败 ' + (tag || '') + ': ' + e3) }
   return n
 }
 // 5×5 区块瞬时预载：以 (x,z) 所在区块为中心（cx-2..cx+2 / cz-2..cz+2）→ 25 区块，
@@ -694,13 +728,13 @@ function c4Level(server, dimId) {
 }
 function c4Sync(portal) {
   try { portal.reloadAndSyncToClient() } catch (e) {
-    try { portal.reloadAndSyncToClientNextTick() } catch (e2) { console.warn('[C4] 同步失败: ' + e2) }
+    try { portal.reloadAndSyncToClientNextTick() } catch (e2) { c4log('warn', '同步失败: ' + e2) }
   }
 }
 function c4Hide(server, cx, cy, cz) {
   let n = 0
   c4PortalsNear(server, cx, cy, cz).forEach(p => {
-    try { p.entity.setIsVisible(false); c4Sync(p.entity); n++ } catch (e) { console.warn('[C4] hide: ' + e) }
+    try { p.entity.setIsVisible(false); c4Sync(p.entity); n++ } catch (e) { c4log('warn', 'hide: ' + e) }
   })
   return n
 }
@@ -723,7 +757,7 @@ function c4KillReverses(server, idName) {
 // —— 能力探测（每种通道第一次用的时候记一笔，!cube api 可查）
 let C4_CAP = { apiStatic: null, instSetter: null, cmdSet: null }
 function c4CapLog(k, v) {
-  if (C4_CAP[k] !== v) { C4_CAP[k] = v; console.info('[C4] 通道 ' + k + ' = ' + v) }
+  if (C4_CAP[k] !== v) { C4_CAP[k] = v; c4log('info', '通道 ' + k + ' = ' + v) }
 }
 
 // 把单扇门指向 dest：三级阶梯
@@ -767,8 +801,8 @@ function c4PreloadFinal(server, slot, job) {
   } else if (job && job.destPlan) {
     let p = job.destPlan
     dimId = p.dim; x = p.x; y = p.y; z = p.z
-    console.warn('[C4] 预载：没有 outer_core，回退到预判落点 @' + x + ',' + y + ',' + z)
-  } else { console.warn('[C4] 最终预载：拿不到 outer_core 且无预判落点'); return }
+    c4log('warn', '预载：没有 outer_core，回退到预判落点 @' + x + ',' + y + ',' + z)
+  } else { c4log('warn', '最终预载：拿不到 outer_core 且无预判落点'); return }
   // 笼子横跨 17 格，最多压 2×2 区块；t=180 那次 forceload 的是【预判落点】的区块，
   // 数据包 unfold 之后实际落点可能已经飘出去几十格 → 那些区块没加载 → fill/setblock 全落空，
   // 结果就是"门在、笼子不在"，走进去直接掉虚空。这里按【最终落点】把 3×3 区块全部常加载。
@@ -783,7 +817,7 @@ function c4PreloadFinal(server, slot, job) {
       server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run function hexahedron:build_hexahedron/17x17')
       server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run setblock ~ ~8 ~ minecraft:light[level=15]')
       server.runCommandSilent('execute in ' + dimId + ' positioned ' + bx + ' ' + by + ' ' + bz + ' run fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 minecraft:structure_void')
-    } catch (e) { console.warn('[C4] 目的地笼子补建失败: ' + e) }
+    } catch (e) { c4log('warn', '目的地笼子补建失败: ' + e) }
   })
   job.dest = { dim: dimId, x: x, y: y, z: z, cx: cx, cz: cz }
 }
@@ -805,7 +839,7 @@ function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId
   let done = 0
   // S1：不再按 ±8.51 几何猜门 —— 先把 tag 补齐（老门按几何 + cw_id_ 推断，幂等），再按 cw_face_* 找门
   try { c4SyncDoorTags(server, 'minecraft:overworld', cx, cy, cz, ext, slot, idName, false, 96) }
-  catch (e) { console.warn('[C4] retarget 前打 tag 失败: ' + e) }
+  catch (e) { c4log('warn', 'retarget 前打 tag 失败: ' + e) }
   let own = []
   c4PortalsInDim(server, 'minecraft:overworld', cx, cy, cz, 96).forEach(e => {
     try {
@@ -816,7 +850,7 @@ function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId
       own.push(e)
     } catch (err) {}
   })
-  if (own.length === 0) console.warn('[C4] retarget: 没找到门 @ ' + cx + ',' + cy + ',' + cz)
+  if (own.length === 0) c4log('warn', 'retarget: 没找到门 @ ' + cx + ',' + cy + ',' + cz)
   own.forEach(e => {
     let d = c4FaceOf(e)
     let sp = srcPos[d], dp = dstPos[d]
@@ -825,14 +859,14 @@ function c4Retarget(server, cx, cy, cz, destKey, dx, dy, dz, withReverse, destId
       try {
         e.setOriginPos(c4Vec(sp[0], sp[1], sp[2]))
         e.setPos(sp[0], sp[1], sp[2])
-      } catch (e2) { console.warn('[C4] 门面落位失败 ' + d + ': ' + e2) }
+      } catch (e2) { c4log('warn', '门面落位失败 ' + d + ': ' + e2) }
     }
     let pos = c4Vec(dp[0], dp[1], dp[2])
     if (!c4ApplyPortal(server, e, destId, destKey, pos, cx, cy, cz)) {
       console.error('[C4] retarget 失败 dir=' + d)
       return
     }
-    try { e.setIsVisible(true); c4Sync(e) } catch (e3) { console.warn('[C4] show: ' + e3) }
+    try { e.setIsVisible(true); c4Sync(e) } catch (e3) { c4log('warn', 'show: ' + e3) }
     done++
   })
   return done
@@ -918,7 +952,7 @@ function c4LiveTeamKeys() {
       let k = c4TeamKey(t)
       if (k) out[k] = c4TeamLabel(t)
     }
-  } catch (e) { console.warn('[C4] 枚举队伍失败: ' + e) }
+  } catch (e) { c4log('warn', '枚举队伍失败: ' + e) }
   return out
 }
 
@@ -938,8 +972,8 @@ function c4Provision(server, slot, teamName, idName, force) {
   // 保护：已经建造过的车厢默认不允许重建 —— 重建 = 清空 19×21×19 内部，会连机器一起铲掉
   let h = c4TeamOfSlot(slot)
   if (!force && h && h.cube && h.cube.provisioned) {
-    console.warn('[C4] 拒绝重建已存在的基地 slot=' + slot + '（未加 force）')
-    console.info('[C4] 已有基地：force 会清空内部，请走 /cwp build ' + slot + ' force 二次确认')
+    c4log('warn', '拒绝重建已存在的基地 slot=' + slot + '（未加 force）')
+    c4log('info', '已有基地：force 会清空内部，请走 /cwp build ' + slot + ' force 二次确认')
     return
   }
   // chat 事件有可能在工作线程触发，而 runCommandSilent/实体枚举必须在主线程 → 统一延后 1 tick
@@ -964,11 +998,11 @@ function c4ProvisionOnThread(server, slot, teamName, idName) {
   try {
     let h = c4TeamOfSlot(slot)
     if (h && h.cube && Number(h.cube.x) !== Number(x)) {
-      console.warn('[C4] 槽位 ' + slot + ' 坐标自愈：' + h.cube.x + ' → ' + x)
+      c4log('warn', '槽位 ' + slot + ' 坐标自愈：' + h.cube.x + ' → ' + x)
       h.cube.x = x; h.cube.z = C4_Z; c4Save()
     }
   } catch (e) {}
-  console.info('[C4] 建造槽位 ' + slot + ' @ x=' + x + ' id=' + idName)
+  c4log('info', '建造槽位 ' + slot + ' @ x=' + x + ' id=' + idName)
   // 瞬时预载 3×3（覆盖 20t 后建主体 + 200t 后建传送器 + 反向门）：建完就自动释放，不常驻。
   // 队伍常加载交给 FTB Chunks；脚本不再为任何基地保留 forceload。
   c4PreloadNear(server, 'minecraft:overworld', x, C4_Z, 1200, 'provision slot' + slot)
@@ -1000,7 +1034,7 @@ function c4MakePortals(server, slot, idName) {
   })
   try {
     server.runCommandSilent(`execute as @e[type=marker,tag=${t}] at @s run portal cb_make_portal ${C4_PORTAL_SPAN} ${C4_PORTAL_SPAN} @s @s main_cube`)
-  } catch (e) { console.warn('[C4] cb_make_portal 失败: ' + e) }
+  } catch (e) { c4log('warn', 'cb_make_portal 失败: ' + e) }
   server.runCommandSilent(`kill @e[type=marker,tag=${t}]`)
   // cb_make_portal 偶尔漏一扇（那面所在的区块在 summon 那一刻还没加载完）→ 15 tick 后按缺的面补一次
   let retry = (tries) => {
@@ -1022,7 +1056,7 @@ function c4MakePortals(server, slot, idName) {
           server.runCommandSilent(`kill @e[type=marker,tag=${mt}]`)
         })
         retry(tries - 1)
-      } catch (e) { console.warn('[C4] 补门失败: ' + e) }
+      } catch (e) { c4log('warn', '补门失败: ' + e) }
     })
   }
   retry(2)
@@ -1031,7 +1065,7 @@ function c4MakePortals(server, slot, idName) {
   // 一次性打齐 cw_face_*/cw_team_*/cw_slot*/cw_id_* 并按面去重（幂等，老存档也能补）。
   let synced = { total: 0, killed: 0, faces: {} }
   try { synced = c4SyncDoorTags(server, 'minecraft:overworld', cx, cy, cz, c4Ext((c4TeamOfSlot(slot) || {}).cube), slot, idName, false, 96) }
-  catch (e) { console.warn('[C4] 建门后打 tag 失败: ' + e) }
+  catch (e) { c4log('warn', '建门后打 tag 失败: ' + e) }
   return synced.total
 }
 
@@ -1044,14 +1078,14 @@ function c4MakeReverse(server, slot, dimId, dx, dy, dz, idName) {
   // 先清掉落点附近的旧反向门：complete_bi_way_portal 只增不删，重建几次就会叠出 6×N 扇
   try {
     server.runCommandSilent('execute in ' + dimId + ' positioned ' + dx + ' ' + dy + ' ' + dz + ' run kill @e[type=immersive_portals:portal,distance=..100,tag=!cw_lobby]')
-  } catch (e) { console.warn('[C4] 清旧反向门失败: ' + e) }
+  } catch (e) { c4log('warn', '清旧反向门失败: ' + e) }
   // ⚠ 只对【6 面门】造反向门：3×3 连接门（cw_link*）也是 cw_id_ 成员，
   //   对它 complete_bi_way_portal 会在落点凭空生出一扇 3×3 反向门，
   //   随后被 c4SyncDoorTags 按几何误标成 cw_face_*，去重时反而把真正的顶/底门顶掉。
   try {
     server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName
       + ',tag=!cw_link,tag=!cw_link_up,tag=!cw_link_down,tag=!cw_face_link,tag=!cw_face_link_base] at @s run portal complete_bi_way_portal')
-  } catch (e) { console.warn('[C4] complete_bi_way_portal 失败: ' + e) }
+  } catch (e) { c4log('warn', 'complete_bi_way_portal 失败: ' + e) }
   // S1：IP 异步造门 —— complete 直后通常还看不到门，所以 tag 必须过几 tick 再补，不能在这里立刻打。
   // 分 5/15/40/80/120 tick 轮询：门出现后补 cw_face_*/cw_team_*/cw_slot*/cw_id_*/cw_rev_*，并按面去重。
   // ⚠ 不能先 setIsVisible(false)（之后 KubeJS 枚举不到门，tag 就永远打不上）。
@@ -1068,11 +1102,11 @@ function c4MakeReverse(server, slot, dimId, dx, dy, dz, idName) {
         if (missing > 0 && synced.total === 0 && i >= 1) {
           server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName
             + ',tag=!cw_link,tag=!cw_link_up,tag=!cw_link_down,tag=!cw_face_link,tag=!cw_face_link_base] at @s run portal complete_bi_way_portal')
-          console.warn('[C4] 反向门仍为 0 → 再 complete 一次（' + t + 't）')
+          c4log('warn', '反向门仍为 0 → 再 complete 一次（' + t + 't）')
         }
         if (missing === 0 || i === tries.length - 1) {
         }
-      } catch (e) { console.warn('[C4] 反向门 tag 同步失败: ' + e) }
+      } catch (e) { c4log('warn', '反向门 tag 同步失败: ' + e) }
     })
   })
   return 0
@@ -1093,7 +1127,7 @@ function c4BuildBaseBox(server, slot, useTmpl) {
   let Z0 = a.z - 8, Z1 = a.z + 8
   let run = (cmd) => {
     try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) }
-    catch (e) { console.warn('[C4] 基地盒: ' + e + ' :: ' + cmd) }
+    catch (e) { c4log('warn', '基地盒: ' + e + ' :: ' + cmd) }
   }
   // ① 清 17³（按 y 分片，单条 < 32768）；管道另由独立模板铺（见下）
   for (let yy = Y0; yy <= Y1; yy += 8) {
@@ -1110,7 +1144,7 @@ function c4BuildBaseBox(server, slot, useTmpl) {
     usedTmpl = tr > 0
   } catch (eTm) { usedTmpl = false }
   if (usedTmpl) 0
-  else console.warn('[C4] 模板 hexahedron:cw_base17 不可用 → 回退逐条 fill')
+  else c4log('warn', '模板 hexahedron:cw_base17 不可用 → 回退逐条 fill')
   if (!usedTmpl) {
   // ② 地板整面平台（不再留 3×3 地板洞）
   run('fill ' + X0 + ' ' + Y0 + ' ' + Z0 + ' ' + X1 + ' ' + Y0 + ' ' + Z1 + ' kubejs:warping_frame_platform')
@@ -1133,8 +1167,8 @@ function c4BuildBaseBox(server, slot, useTmpl) {
     let trP = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_pipe_ladder '
       + (X0 + 6) + ' ' + (Y0 + 1) + ' ' + (Z0 + 6)))
     if (trP > 0) 0
-    else console.warn('[C4] 模板 hexahedron:cw_pipe_ladder 不可用 → 由扩建器建管道')
-  } catch (eP) { console.warn('[C4] 管道模板失败: ' + eP) }
+    else c4log('warn', '模板 hexahedron:cw_pipe_ladder 不可用 → 由扩建器建管道')
+  } catch (eP) { c4log('warn', '管道模板失败: ' + eP) }
 
   // ⑤ 隐藏光源：房间中央（和原 17x17 的 ~ ~8 ~ 同高）+ 天花板下 1 格按每 5 格补一圈
   //    （初始节点也不会再出现"一片黑"；light 无碰撞、不可见，只补空气）
@@ -1156,7 +1190,7 @@ function c4BuildBaseBox(server, slot, useTmpl) {
       run('setblock ' + q[0] + ' ' + q[1] + ' ' + q[2] + ' kubejs:warping_vent')
       run('summon marker ' + q[0] + ' ' + q[1] + ' ' + q[2] + ' {Tags:["vent","c4bvent' + slot + '"]}')
     })
-  } catch (eV) { console.warn('[C4] 基地排气失败: ' + eV) }
+  } catch (eV) { c4log('warn', '基地排气失败: ' + eV) }
   return 1
 }
 
@@ -1189,9 +1223,9 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       let trC = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter21 '
         + tx0 + ' ' + ty0 + ' ' + tz0))
       if (trC > 0) 0
-      else console.warn('[C4] 传送仓模板不可用 slot=' + slot)
-    } catch (eCab) { console.warn('[C4] 先建传送仓失败: ' + eCab) }
-    try { c4BuildBaseBox(server, slot, true) } catch (eBB) { console.warn('[C4] 基地封闭盒失败: ' + eBB) }
+      else c4log('warn', '传送仓模板不可用 slot=' + slot)
+    } catch (eCab) { c4log('warn', '先建传送仓失败: ' + eCab) }
+    try { c4BuildBaseBox(server, slot, true) } catch (eBB) { c4log('warn', '基地封闭盒失败: ' + eBB) }
     // ★ 基地尺寸以 cells 为准（ext 转化后已废弃）：开荒/重置后按 cells 重建整个并集外壳，
     //   否则只会有原点 17³ 那一间，扩建过的基地看起来就“变小”了。
     try {
@@ -1199,7 +1233,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       if (infoC && infoC.cube && global.CWE && global.CWE.rebuildCells) {
         global.CWE.rebuildCells(server, infoC.cube)
       }
-    } catch (eCells) { console.warn('[C4] 基地 cells 重建失败: ' + eCells) }
+    } catch (eCells) { c4log('warn', '基地 cells 重建失败: ' + eCells) }
   } else {
     server.runCommandSilent(`execute positioned ${x} ${C4_BASE_Y} ${C4_Z} run function hexahedron:build_hexahedron/17x17`)
   }
@@ -1214,7 +1248,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
   if (Number(slot) > 0) {
     try {
       c4ShellFill(server, 'minecraft:overworld', c4RoomBox(x + 0.5, C4_CORE_Y, C4_Z + 0.5, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'minecraft:air')
-    } catch (e) { console.warn('[C4] 外壳 filling 失败: ' + e) }
+    } catch (e) { c4log('warn', '外壳 filling 失败: ' + e) }
   }
 
   // 2) 6 个门面 marker（只带本槽位专属 tag，避免和别台混）
@@ -1261,9 +1295,9 @@ function c4ProvisionBody(server, slot, teamName, idName) {
         server.runCommandSilent('execute in ' + CAGE + ' positioned ' + MX + ' ' + (C4_CORE_Y - 5) + ' ' + MZ + ' run fill ~-1 ~-3 ~-1 ~1 ~-3 ~1 minecraft:structure_void')
         // 目的地外壳清成 air（与 c4BuildRoom(true) 一致：目的地不放 filling）
         try { c4ShellFill(server, CAGE, c4RoomBox(MX, C4_CORE_Y, MZ, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }), 'minecraft:air') } catch (e) {}
-      } catch (e) { console.warn('[C4] 起点笼子建造失败: ' + e) }
+      } catch (e) { c4log('warn', '起点笼子建造失败: ' + e) }
       let made = c4Retarget(server, MX, C4_CORE_Y, MZ, c4DimKey(CAGE), MX, C4_CORE_Y, MZ, false, CAGE, idName, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }, true, slot)
-      try { c4MakeReverse(server, slot, CAGE, MX, C4_CORE_Y, MZ, idName) } catch (e) { console.warn('[C4] 起点反向门失败: ' + e) }
+      try { c4MakeReverse(server, slot, CAGE, MX, C4_CORE_Y, MZ, idName) } catch (e) { c4log('warn', '起点反向门失败: ' + e) }
     })
   })
 
@@ -1279,7 +1313,7 @@ function c4ProvisionBody(server, slot, teamName, idName) {
       c4StripCabin(server, slot, true)
       // 3×3 洞不自动生成：由玩家手持扩展器对着【基地天花板洞】仰视右键二次确认（或 /cube admin hole）才建
       try { let h9 = c4TeamOfSlot(slot); if (h9 && h9.cube) { h9.cube.ready = true; c4Save() } } catch (eR) {}
-    } catch (e) { console.warn('[C4] 新舱传送器迁移失败: ' + e) }
+    } catch (e) { c4log('warn', '新舱传送器迁移失败: ' + e) }
   })
 }
 
@@ -1506,14 +1540,14 @@ function c4StartTravelBar(server, slot, job, seed) {
     let x = Math.floor(c4CubeX(slot))
     server.runCommandSilent('scoreboard players set @e[type=marker,tag=cw_slot' + slot + '] dimension_seed ' + seed)
     server.runCommandSilent('execute in minecraft:overworld positioned ' + x + ' ' + C4_CORE_Y + ' ' + C4_Z + ' run tag @a[distance=..50] add travel_actionbar')
-  } catch (e) { console.warn('[C4] 动作条启动失败: ' + e) }
+  } catch (e) { c4log('warn', '动作条启动失败: ' + e) }
   c4TravelBarTick(server, slot, job, 0)
 }
 function c4TravelBarTick(server, slot, job, n) {
   if (!job || C4_BUSY !== job || n > 600) return
   try {
     server.runCommandSilent('title @a[tag=travel_actionbar] actionbar {"text":"' + c4TravelText(job) + '","color":"aqua","bold":true}')
-  } catch (e) { console.warn('[C4] 动作条 tick 失败: ' + e) }
+  } catch (e) { c4log('warn', '动作条 tick 失败: ' + e) }
   server.scheduleInTicks(1, () => c4TravelBarTick(server, slot, job, n + 1))
 }
 
@@ -1527,7 +1561,7 @@ function c4RandDestOffset() {
 // 已经算出 seed 时用它选目的地（消耗是逐 tick 的，t=60 的最终 seed 才是权威值）
 function c4PickDestForSeed(server, slot, seed) {
   let dim = C4_SEED_DIMS[seed] || C4_SEED_DIMS[0]
-  if (!C4_SEED_DIMS[seed]) console.warn('[C4] 未知 seed=' + seed + '，回退 seed 0（graveyard）')
+  if (!C4_SEED_DIMS[seed]) c4log('warn', '未知 seed=' + seed + '，回退 seed 0（graveyard）')
   let off = c4RandDestOffset()
   let x = c4CubeX(slot) + off.x
   let z = C4_Z + off.z
@@ -1545,13 +1579,13 @@ function c4PickDestForSeed(server, slot, seed) {
 function c4ResolveY(server, dim, x, z) {
   let fixed = (C4_DIM_Y[dim] !== undefined) ? Number(C4_DIM_Y[dim]) : null
   let lv = null, minY = 0, maxY = 256, h = null
-  try { lv = c4Level(server, dim) } catch (e) { console.warn('[C4] 落点 y: 取维度失败 ' + dim + ': ' + e) }
+  try { lv = c4Level(server, dim) } catch (e) { c4log('warn', '落点 y: 取维度失败 ' + dim + ': ' + e) }
   if (lv) {
     try { minY = Number(lv.getMinBuildHeight()); maxY = Number(lv.getMaxBuildHeight()) } catch (e) {}
     try {
       let HM = c4Cls('net.minecraft.world.level.levelgen.Heightmap$Types')
       h = Number(lv.getHeight(HM.MOTION_BLOCKING, Math.floor(x), Math.floor(z)))
-    } catch (e) { h = null; console.warn('[C4] 高度图不可用 ' + dim + ': ' + e) }
+    } catch (e) { h = null; c4log('warn', '高度图不可用 ' + dim + ': ' + e) }
   }
   if (!isFinite(minY)) minY = 0
   if (!isFinite(maxY)) maxY = minY + 256
@@ -1607,7 +1641,7 @@ function c4MigrateDests() {
       delete c.dest
     }
   }
-  if (n > 0) { c4Save(); console.info('[C4] dest → dests[dim] 迁移：' + n + ' 条（一次性/幂等）') }
+  if (n > 0) { c4Save(); c4log('info', 'dest → dests[dim] 迁移：' + n + ' 条（一次性/幂等）') }
   return n
 }
 function c4DestValid(server, d) {
@@ -1639,7 +1673,7 @@ function c4DestRoomExists(server, d) {
       if (bl(x, fy, z + 2) === 'kubejs:warping_frame_platform') { floorOk = true; return }
     })
     if (!floorOk) {
-      console.warn('[C4] 落点探针失败 @' + x + ',' + y + ',' + z + ' 地板 @Y0=' + (y - 8) + ' 不是 platform'
+      c4log('warn', '落点探针失败 @' + x + ',' + y + ',' + z + ' 地板 @Y0=' + (y - 8) + ' 不是 platform'
         + '（采样 ' + bl(x - 2, y - 8, z) + ' / ' + bl(x + 2, y - 8, z) + ' / ' + bl(x, y - 8, z - 2) + ' / ' + bl(x, y - 8, z + 2) + '）')
       return false
     }
@@ -1650,7 +1684,7 @@ function c4DestRoomExists(server, d) {
     if (bl(x - 8, y, z + 8) === 'kubejs:warping_frame') wall++
     if (bl(x + 8, y, z + 8) === 'kubejs:warping_frame') wall++
     if (wall < 2) {
-      console.warn('[C4] 落点探针失败 @' + x + ',' + y + ',' + z + ' 四角 frame 只有 ' + wall + '/4')
+      c4log('warn', '落点探针失败 @' + x + ',' + y + ',' + z + ' 四角 frame 只有 ' + wall + '/4')
       return false
     }
     // 中心上方 3 格必须是空气/封洞
@@ -1683,16 +1717,16 @@ function c4CheckDest(server, slot, idName, d, dx, dy, dz, attempt, cb) {
       fwdOwn = c4CountFaceDoors(server, tp.x, tp.y, tp.z, 240)
       fwdAll = c4PortalsInDim(server, 'minecraft:overworld', tp.x, tp.y, tp.z, 240).length
     }
-  } catch (eFix) { console.warn('[C4] 校验前补 tag 失败: ' + eFix) }
+  } catch (eFix) { c4log('warn', '校验前补 tag 失败: ' + eFix) }
   // 隧道打开时目的地那扇反向 down 门会被清掉 → 只要求 5 扇反向门
   let needRev = c4HoleOpen(slot) ? 5 : 6
   if (rev >= needRev) { cb(true, rev, fwdOwn, fwdAll); return }
   if (attempt >= 2) {
-    console.warn('[C4] 反向门 rev=' + rev + ' 补建后仍不足')
+    c4log('warn', '反向门 rev=' + rev + ' 补建后仍不足')
     cb(false, rev, fwdOwn, fwdAll)
     return
   }
-  try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e4) { console.warn('[C4] 反向门补建失败: ' + e4) }
+  try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e4) { c4log('warn', '反向门补建失败: ' + e4) }
   server.scheduleInTicks(20, () => {
     if (g !== C4_GEN) return
     c4CheckDest(server, slot, idName, d, dx, dy, dz, attempt + 1, cb)
@@ -1709,7 +1743,7 @@ function c4EnsureReverse(server, slot, dimId, dx, dy, dz, idName, round) {
   }
   try {
     server.runCommandSilent('execute as @e[type=immersive_portals:portal,tag=cw_id_' + idName + '] at @s run portal complete_bi_way_portal')
-  } catch (e2) { console.warn('[C4] 反向门补建失败: ' + e2) }
+  } catch (e2) { c4log('warn', '反向门补建失败: ' + e2) }
   server.scheduleInTicks(20, () => {
     if (g !== C4_GEN) return
     try { c4SyncDoorTags(server, dimId, dx, dy, dz, ext, slot, idName, true, 240) } catch (e3) {}
@@ -1736,7 +1770,7 @@ function c4Pump(server) {
 
 function c4Warp(server, job) {
   if (job && job.gen !== undefined && job.gen !== C4_GEN) {
-    console.warn('[C4] 旧世代跃迁作业丢弃 slot=' + (job && job.slot))
+    c4log('warn', '旧世代跃迁作业丢弃 slot=' + (job && job.slot))
     C4_BUSY = null
     return
   }
@@ -1752,7 +1786,7 @@ function c4WarpBody(server, job) {
   let slot = job.slot
   let own = c4TeamOfSlot(slot)
   if (own && job.teamKey && own.key !== job.teamKey) {
-    console.warn('[C4] 拒绝跨队操作：job.teamKey=' + job.teamKey + ' 属于岗位 ' + slot + ' 的队伍=' + own.key)
+    c4log('warn', '拒绝跨队操作：job.teamKey=' + job.teamKey + ' 属于岗位 ' + slot + ' 的队伍=' + own.key)
     c4TellTeam(server, slot, c4t1('cw.warp.wrong_team', (own && own.cube) ? own.cube.name : ('基地')))
     C4_BUSY = null
     return
@@ -1795,7 +1829,7 @@ function c4WarpBody(server, job) {
     }
   })
   if (riders.length === 0) {
-    console.info('[C4] 槽位 ' + slot + ' 跃迁取消：舱内无人（启动者必须站在舱内）')
+    c4log('info', '槽位 ' + slot + ' 跃迁取消：舱内无人（启动者必须站在舱内）')
     c4TellTeam(server, slot, c4t('cw.warp.empty'))
     c4WarpEnd(server, slot, label, job)
     return
@@ -1824,7 +1858,7 @@ function c4WarpBody(server, job) {
     let fixedY = C4_DIM_Y[targetDim]
     let badY = (fixedY !== undefined && Number(prevDest.y) !== Number(fixedY))
     if (badY) {
-      console.warn('[C4] 落点 y 与维度固定 y 不符（DB y=' + prevDest.y + '，应为 ' + fixedY
+      c4log('warn', '落点 y 与维度固定 y 不符（DB y=' + prevDest.y + '，应为 ' + fixedY
         + '）→ 清除错误记录 @' + prevDest.x + ',' + prevDest.y + ',' + prevDest.z
         + ' dim=' + targetDim + '，本次重新分配')
       try {
@@ -1832,7 +1866,7 @@ function c4WarpBody(server, job) {
           delete info.cube.dests[targetDim]
           c4Save()
         }
-      } catch (eDel) { console.warn('[C4] 清除错误落点记录失败: ' + eDel) }
+      } catch (eDel) { c4log('warn', '清除错误落点记录失败: ' + eDel) }
       prevDest = null
     } else {
       useFixed = true
@@ -1879,7 +1913,7 @@ function c4WarpBody(server, job) {
       server.runCommandSilent('execute in minecraft:overworld run setblock ' + (tpBtn.x + 1) + ' ' + tpBtn.y + ' ' + (tpBtn.z + 1) + ' kubejs:warping_interface_running')
       // 倒计时文字只走动作条：正在前往维度 #seed（排队数实时刷新）
       c4StartTravelBar(server, slot, job, d.seed)
-    } catch (e) { console.warn('[C4] 按下动画失败: ' + e) }
+    } catch (e) { c4log('warn', '按下动画失败: ' + e) }
   })
   // 原包 runtime.mcfunction:21-23：+1 → 0 → -1，每格 1 秒；种子按消耗顺序逐格累加
   // （原包就是"读一格 → 结算 → 消耗"，倒计时期间被放进去的算子也会被算上）
@@ -1891,7 +1925,7 @@ function c4WarpBody(server, job) {
       job._ops[1] = c4OpAt(server, slot, 1)
       c4ConsumeSlot(server, slot, 1)
       c4VentBurst(server, slot)   // 排气与算子消耗同步（原在 perform 内 +10/30/50，维度加载完才喷太晚）
-    } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+    } catch (e) { c4log('warn', '消耗失败: ' + e) }
   })
   server.scheduleInTicks(40, () => {
     if (C4_BUSY !== job) return
@@ -1899,7 +1933,7 @@ function c4WarpBody(server, job) {
       job._ops[0] = c4OpAt(server, slot, 0)
       c4ConsumeSlot(server, slot, 0)
       c4VentBurst(server, slot)
-    } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+    } catch (e) { c4log('warn', '消耗失败: ' + e) }
   })
   server.scheduleInTicks(60, () => {
     if (C4_BUSY !== job) return
@@ -1907,7 +1941,7 @@ function c4WarpBody(server, job) {
       job._ops[-1] = c4OpAt(server, slot, -1)
       c4ConsumeSlot(server, slot, -1)
       c4VentBurst(server, slot)
-    } catch (e) { console.warn('[C4] 消耗失败: ' + e) }
+    } catch (e) { c4log('warn', '消耗失败: ' + e) }
     // 与原包一致：普通算子按 1→0→-1 顺序算，eye/infinite 最后覆盖
     try {
       let acc = 0, sp = null
@@ -1925,15 +1959,15 @@ function c4WarpBody(server, job) {
     //   这里仅跳过覆盖、保留 d，其它维度/非随机传送的重算逻辑完全不变。
     let keepRandomDest = job.edgeRandomPersist && String(d.dim) === 'hexahedron:the_edge_of_reality'
     if (seedAcc !== d.seed && !keepRandomDest) {
-      console.warn('[C4] 槽位 ' + slot + ' 倒计时期间插槽被改动：seed ' + d.seed + ' → ' + seedAcc + '，按新 seed 重选目的地')
+      c4log('warn', '槽位 ' + slot + ' 倒计时期间插槽被改动：seed ' + d.seed + ' → ' + seedAcc + '，按新 seed 重选目的地')
       try {
         d = c4PickDestForSeed(server, slot, seedAcc)
         dx = d.x + 0.5; dz = d.z + 0.5; dy = d.y + 0.5
         fx = Math.floor(dx); fz = Math.floor(dz)
         c4PreloadNear(server, d.dim, fx, fz, 600, 'warp-dest slot' + slot)
-      } catch (e) { console.warn('[C4] 重选目的地失败: ' + e) }
+      } catch (e) { c4log('warn', '重选目的地失败: ' + e) }
     } else if (keepRandomDest) {
-      console.info('[C4] edge 随机传送：保留随机落点 @' + d.x + ',' + d.y + ',' + d.z + '（跳过 t=60 seed 重算覆盖）')
+      c4log('info', 'edge 随机传送：保留随机落点 @' + d.x + ',' + d.y + ',' + d.z + '（跳过 t=60 seed 重算覆盖）')
     }
     // 动作条在 t=1 就已经跑起来，这里只把显示值换成最终 seed（循环下一 tick 自动刷新）
     job.seedShown = seedAcc
@@ -1955,11 +1989,11 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
     let g = C4_GEN
     if (!job._roomRetry) {
       job._roomRetry = 1
-      console.warn('[C4] 目的地房间未生成 → 重新预载 + 补建后复核 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
+      c4log('warn', '目的地房间未生成 → 重新预载 + 补建后复核 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z)
       try { c4PreloadNear(server, d.dim, Number(d.x), Number(d.z), 600, 'room-retry slot' + slot) } catch (eP4) {}
       try { c4BuildRoom(server, d.dim, Number(d.x) + 0.5, Number(d.y) + 0.5, Number(d.z) + 0.5,
         { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }, true) } catch (eB2) {
-        console.warn('[C4] 房间补建异常: ' + eB2)
+        c4log('warn', '房间补建异常: ' + eB2)
       }
       server.scheduleInTicks(20, () => {
         if (g !== C4_GEN || C4_BUSY !== job) return
@@ -1967,7 +2001,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
       })
       return
     }
-    console.warn('[C4] 跃迁中止：目的地房间补建后仍未生成 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
+    c4log('warn', '跃迁中止：目的地房间补建后仍未生成 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
       + '（门已指向但房间缺失，回滚到起点，不落库）')
     try { c4TellTeam(server, slot, c4t('cw.warp.abort')) } catch (eT) {}
     try { c4BarTeam(server, slot, '跃迁失败：目的地房间未生成，已回到起点') } catch (eB) {}
@@ -1981,7 +2015,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
       c4DestSet(info.cube, d.dim, d.x, d.y, d.z)
       info.cube.curDestDim = d.dim
       c4Save()
-      if (job.edgeRandomPersist) console.info('[C4] edge 随机传送：新落点已写入 dests @' + d.x + ',' + d.y + ',' + d.z)
+      if (job.edgeRandomPersist) c4log('info', 'edge 随机传送：新落点已写入 dests @' + d.x + ',' + d.y + ',' + d.z)
     }
   } catch (e) {}
   job.dest = { dim: d.dim, x: d.x, y: d.y, z: d.z, cx: Math.floor(d.x / 16) * 16, cz: Math.floor(d.z / 16) * 16 }
@@ -1989,7 +2023,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
   // 隧道打开时，目的地房间不该有反向 down 门（舱底是洞）→ 到站后顺手清掉
   try { if (c4HoleOpen(slot)) c4KillReverseDowns(server, slot) } catch (eRD) {}
   // 跃迁全流程唯一一行汇总日志（目的地最终确定时打印；失败/回滚路径另有 warn）
-  console.info('[C4] 跃迁 slot=' + slot + ' 队伍《' + label + '》 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
+  c4log('info', '跃迁 slot=' + slot + ' 队伍《' + label + '》 → ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
     + '（乘员 ' + ((job.riders && job.riders.length) || 0) + ' 人）')
   server.scheduleInTicks(10, () => c4WarpEnd(server, slot, label, job))
 }
@@ -2025,8 +2059,8 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
         }
       } catch (e) { have = c4CountFaceDoors(server, tp.x, tp.y, tp.z, 96) }
       if ((have < expectFaces || faceBad > 0) && phase < 2) {
-        console.warn('[C4] 传送器门不完整（实有 ' + have + ' 扇，异常面 ' + faceBad + '）→ 重建后重试（phase ' + phase + '）')
-        try { c4MakeRoomPortals(server, slot, idName, ext0, tp) } catch (e) { console.warn('[C4] 重建门失败: ' + e) }
+        c4log('warn', '传送器门不完整（实有 ' + have + ' 扇，异常面 ' + faceBad + '）→ 重建后重试（phase ' + phase + '）')
+        try { c4MakeRoomPortals(server, slot, idName, ext0, tp) } catch (e) { c4log('warn', '重建门失败: ' + e) }
         server.scheduleInTicks(20, () => perform(phase + 1))
         return
       }
@@ -2048,7 +2082,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
       let roomExists = false
       try { roomExists = c4DestRoomExists(server, { dim: d.dim, x: d.x, y: d.y, z: d.z }) } catch (eRe) { roomExists = false }
       if (!roomExists) {
-        console.info('[C4] 目的地房间缺失 → 补建 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
+        c4log('info', '目的地房间缺失 → 补建 ' + d.dim + ' @' + d.x + ',' + d.y + ',' + d.z
           + (job.useFixedDest ? '（固定落点复用时发现）' : '（首次分配）'))
         // 补建前重新预载，保证 place template / fill 落在已加载区块上
         try { c4PreloadNear(server, d.dim, Math.floor(dx), Math.floor(dz), 600, 'rebuild-room slot' + slot) } catch (eP2) {}
@@ -2056,7 +2090,7 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
         if (room0 && Math.floor(dy - 8) !== room0.Y0) {
           dy = room0.Y0 + 8.5
           d.y = Math.round(dy - 0.5)
-          console.warn('[C4] 动画版：房间 y 被夹取 → core=' + d.y + '（房间 ' + room0.Y0 + '..' + room0.Y1 + '）')
+          c4log('warn', '动画版：房间 y 被夹取 → core=' + d.y + '（房间 ' + room0.Y0 + '..' + room0.Y1 + '）')
         }
       }
       // ★ edge 维度：固定落点；遗迹两处（幂等：中心格不是空气就跳过，复用旧落点也会补建）
@@ -2075,13 +2109,13 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
           }
           if (!hasRuin(ezFlush)) {
             let nF = Number(server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + ex0 + ' ' + ey0 + ' ' + ezFlush))
-            console.info('[C4] edge 贴面遗迹 place @' + ex0 + ',' + ey0 + ',' + ezFlush + ' ret=' + nF)
+            c4log('info', 'edge 贴面遗迹 place @' + ex0 + ',' + ey0 + ',' + ezFlush + ' ret=' + nF)
           } else 0
           if (!hasRuin(ezFar)) {
             let nR = Number(server.runCommandSilent('execute in ' + d.dim + ' run place template hexahedron:lost_hexahedron ' + ex0 + ' ' + ey0 + ' ' + ezFar))
-            console.info('[C4] edge 远处遗迹 place @' + ex0 + ',' + ey0 + ',' + ezFar + ' ret=' + nR)
+            c4log('info', 'edge 远处遗迹 place @' + ex0 + ',' + ey0 + ',' + ezFar + ' ret=' + nR)
           } else 0
-        } catch (eEdge) { console.warn('[C4] edge 遗迹处理失败: ' + eEdge) }
+        } catch (eEdge) { c4log('warn', 'edge 遗迹处理失败: ' + eEdge) }
       }
 
       // b) 分步指门：从「上一处落点」lerp 到「新落点」，每段间隔 per tick
@@ -2116,20 +2150,20 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
           try {
             n = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(d.dim), dx, dy, dz, false, d.dim, idName, ext0, false, slot)
           } catch (eF) { n = 0 }
-          try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { console.warn('[C4] 反向门失败: ' + e) }
+          try { c4MakeReverse(server, slot, d.dim, dx, dy, dz, idName) } catch (e) { c4log('warn', '反向门失败: ' + e) }
           // ★ 关键：c4Retarget 是「先补 tag、再 setPortalTransformation」，而 IP 在
           //   transformation 变更后会【重建门实体】→ 新实体上没有 cw_face_* tag。
           //   于是紧接着校验会数到 fwdOwn=0~2 → 误判"目的地未就绪" → 中止并回滚，
           //   这就是"门明明指过去了却报跃迁终止"的根因。
           //   改完门必须【再补一次 tag】才校验。
           try { c4SyncDoorTags(server, 'minecraft:overworld', tp.x, tp.y, tp.z, ext0, slot, idName, false, 240) } catch (eSt) {
-            console.warn('[C4] 指门后补 tag 失败: ' + eSt)
+            c4log('warn', '指门后补 tag 失败: ' + eSt)
           }
           // 隧道打开时 down 面本来就该缺席：只要求 5 面，否则会误报"跃迁中止"
           let needFwd = c4HoleOpen(slot) ? 5 : 6
           c4CheckDest(server, slot, idName, d, dx, dy, dz, 0, (ok, rev, fwdOwn, fwdAll) => {
             if (!ok || n < needFwd || fwdOwn < needFwd) {
-              console.warn('[C4] 剧场版 e 校验失败：指门=' + n + '/' + needFwd + ' 本队正向=' + fwdOwn + ' 反向=' + rev
+              c4log('warn', '剧场版 e 校验失败：指门=' + n + '/' + needFwd + ' 本队正向=' + fwdOwn + ' 反向=' + rev
                 + '（在场门=' + fwdAll + '） → 回滚到私有笼子')
               c4TellTeam(server, slot, c4t('cw.warp.abort'))
               try { c4BarTeam(server, slot, '跃迁失败：目的地未就绪，已回到起点') } catch (e7) {}
@@ -2148,14 +2182,14 @@ function c4FinishWarp(server, slot, label, job, info, d, idName) {
           job.destOK = true
           server.scheduleInTicks(10, () => c4WarpEnd(server, slot, label, job))
         } catch (e) {
-          console.warn('[C4] 剧场版 c/d 失败: ' + e)
+          c4log('warn', '剧场版 c/d 失败: ' + e)
           c4TellTeam(server, slot, c4t('cw.warp.abort'))
           try { c4RestoreHome(server, slot, idName, d) } catch (e2) {}
           c4WarpEnd(server, slot, label, job)
         }
       })
     } catch (e) {
-      console.warn('[C4] 自主跃迁失败: ' + e)
+      c4log('warn', '自主跃迁失败: ' + e)
       c4TellTeam(server, slot, c4t('cw.warp.abort'))
       try { c4RestoreHome(server, slot, idName, d) } catch (e2) {}
       c4WarpEnd(server, slot, label, job)
@@ -2183,7 +2217,7 @@ function c4TravelSounds(server, atCore) {
     server.runCommandSilent(atCore + 'playsound minecraft:block.respawn_anchor.charge master @a ~ ~ ~ 1 1')
     server.runCommandSilent(atCore + 'playsound block.respawn_anchor.set_spawn master @a ~ ~ ~ 10 1')
     server.runCommandSilent(atCore + 'playsound minecraft:block.portal.trigger master @a ~ ~ ~ 1 0')
-  } catch (e) { console.warn('[C4] 旅行音效失败: ' + e) }
+  } catch (e) { c4log('warn', '旅行音效失败: ' + e) }
 }
 
 // 原包 runtime=30/70/100 的排气：排气孔位置的灭火声 + effects/vents 的六向尘
@@ -2196,7 +2230,7 @@ function c4VentBurst(server, slot) {
     server.runCommandSilent(at + 'execute as @e[type=marker,tag=vent,distance=..30] at @s run playsound minecraft:block.candle.extinguish master @a ~ ~ ~ 0.35 1')
     server.runCommandSilent(at + 'execute as @e[type=marker,tag=vent,distance=..30] at @s run particle minecraft:dust_color_transition 0.3 1 1 3 0 0 0.3 ~ ~1 ~ 0.25 0.25 0.25 0.02 8 force')
     server.runCommandSilent(at + 'execute as @e[type=marker,tag=vent,distance=..30] at @s run particle minecraft:dust_color_transition 0.3 1 1 3 0 0 0.3 ~ ~-1 ~ 0.25 0.25 0.25 0.02 8 force')
-  } catch (e) { console.warn('[C4] 排气失败: ' + e) }
+  } catch (e) { c4log('warn', '排气失败: ' + e) }
 }
 
 // 与 c4BuildRoom 的越界夹取同一套算法：先指门时就用"最终"的核心 y，避免门和房间差半格
@@ -2210,11 +2244,11 @@ function c4ClampCoreY(server, dimId, cy, ext) {
         let py = Math.max(0, (ext && Number(ext.py)) | 0)
         let i = Math.round(cy - 0.5)
         i = Math.max(minY + 9, Math.min(maxY - 10 - 16 * py, i))
-        console.warn('[C4] 房间越界 dim=' + dimId + ' cy=' + cy + ' → 核心 y 夹到 ' + (i + 0.5))
+        c4log('warn', '房间越界 dim=' + dimId + ' cy=' + cy + ' → 核心 y 夹到 ' + (i + 0.5))
         return i + 0.5
       }
     }
-  } catch (e) { console.warn('[C4] 夹取核心 y 失败: ' + e) }
+  } catch (e) { c4log('warn', '夹取核心 y 失败: ' + e) }
   return cy
 }
 
@@ -2236,10 +2270,10 @@ function c4RestoreHome(server, slot, idName, dest) {
         try {
           server.runCommandSilent('execute in ' + ddim + ' positioned ' + dpx + ' ' + dpy + ' ' + dpz
             + ' run kill @e[type=immersive_portals:portal,name=!main_cube,distance=..100,tag=!cw_lobby]')
-          console.info('[C4] 回滚：已清理目的地残留门 ' + ddim + ' @' + dest.x + ',' + dest.y + ',' + dest.z)
-        } catch (eK) { console.warn('[C4] 回滚清残留门失败: ' + eK) }
+          c4log('info', '回滚：已清理目的地残留门 ' + ddim + ' @' + dest.x + ',' + dest.y + ',' + dest.z)
+        } catch (eK) { c4log('warn', '回滚清残留门失败: ' + eK) }
       })
-    } catch (eP) { console.warn('[C4] 回滚清残留门预载失败: ' + eP) }
+    } catch (eP) { c4log('warn', '回滚清残留门预载失败: ' + eP) }
   }
   let h = c4TeamOfSlot(slot)
   let ext = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }   // 私有笼子固定 17³，与门/反向门一致（旧 ext 不参与）
@@ -2250,14 +2284,14 @@ function c4RestoreHome(server, slot, idName, dest) {
       c4BuildRoom(server, CAGE, cx, C4_CORE_Y, cz, ext, true)
       let made = c4Retarget(server, cx, C4_CORE_Y, cz, c4DimKey(CAGE), cx, C4_CORE_Y, cz, false, CAGE, idName, ext, true, slot)
       try { c4MakeReverse(server, slot, CAGE, cx, C4_CORE_Y, cz, idName) } catch (e) {}
-      console.info('[C4] 跃迁失败 → 门已指回私有笼子（' + made + ' 扇）')
-    } catch (e) { console.warn('[C4] 指回笼子失败: ' + e) }
+      c4log('info', '跃迁失败 → 门已指回私有笼子（' + made + ' 扇）')
+    } catch (e) { c4log('warn', '指回笼子失败: ' + e) }
   })
 }
 
 function c4WarpEnd(server, slot, label, job) {
   if (job && job.gen !== undefined && job.gen !== C4_GEN) {
-    console.warn('[C4] 旧世代跃迁收尾丢弃 slot=' + slot)
+    c4log('warn', '旧世代跃迁收尾丢弃 slot=' + slot)
     return
   }
   // 动画/跃迁彻底结束才把按钮、界面弹回来（按下期间按钮一直是 pressed，右键不会再触发）
@@ -2303,7 +2337,7 @@ function c4WarpEnd(server, slot, label, job) {
       // 这里不再补"加 1 区块 / 1200t 后删 1 区块"——那是假释放（加 36 只删 1）。
       // 玩家到站后由客户端/FTB Chunks 保活，脚本不常驻。
     }
-  } catch (e) { console.warn('[C4] 落点记录失败: ' + e) }
+  } catch (e) { c4log('warn', '落点记录失败: ' + e) }
   // S5：同维度随机出的临时落点 → 玩家离开 20s 后按旧落点清理（不写 cube.dest）
   // ★ edge 随机传送例外：新房已写回 dests 成为固定落点，不能当临时房拆掉。
   try {
@@ -2317,7 +2351,7 @@ function c4WarpEnd(server, slot, label, job) {
 
   // 拆掉【上一次】的落点笼子：此刻新房间已建好、玩家已在新落点，旧房间才是可丢的。
   // 只有本次真的校验通过（job.destOK）才动，失败/取消路径一律不碰旧落点。
-  try { if (job && job.destOK) c4CleanOldDest(server, slot, job) } catch (e) { console.warn('[C4] 清理旧落点失败: ' + e) }
+  try { if (job && job.destOK) c4CleanOldDest(server, slot, job) } catch (e) { c4log('warn', '清理旧落点失败: ' + e) }
 
   C4_BUSY = null
   // 成功路径不往聊天框发任何东西（倒计时/排队都在动作条），失败提示已在各自分支发出
@@ -2381,7 +2415,7 @@ function c4CleanOldDest(server, slot, job) {
   // ②-a 安全闸：旧落点有人就不动
   let who = c4OldDestBusy(server, odc)
   if (who.length > 0) {
-    console.info('[C4] 旧落点有人，暂不清理 ' + where + '（' + who.join(',') + '）')
+    c4log('info', '旧落点有人，暂不清理 ' + where + '（' + who.join(',') + '）')
     return
   }
 
@@ -2394,7 +2428,7 @@ function c4CleanOldDest(server, slot, job) {
       // 5 tick 后再确认一次：这期间有人跑回旧落点就放弃（这个房间会留着，不做无人值守的补拆）
       let who2 = c4OldDestBusy(server, odc)
       if (who2.length > 0) {
-        console.info('[C4] 旧落点有人，暂不清理 ' + where + '（' + who2.join(',') + '）')
+        c4log('info', '旧落点有人，暂不清理 ' + where + '（' + who2.join(',') + '）')
         return
       }
       // ②-b 门：只杀带本台 tag 的（旧目的地那侧的门同时带 cw_rev_<id> 和 cw_id_<id>）
@@ -2404,7 +2438,7 @@ function c4CleanOldDest(server, slot, job) {
         try {
           let r = Number(server.runCommandSilent(pos + 'kill @e[type=immersive_portals:portal,tag=' + t + ',distance=..48]'))
           if (!isNaN(r)) doors += r
-        } catch (e) { console.warn('[C4] 清旧门失败 ' + t + ': ' + e) }
+        } catch (e) { c4log('warn', '清旧门失败 ' + t + ': ' + e) }
       })
       // 兜底：背后那侧的门是 IP 异步造出来的，c4MakeReverse 打 tag 时它们往往还没生成 → 没 tag，
       // 只按 tag 杀会留下一圈"幽灵门"。这里把这个房间几何范围内、且明确不属于任何队伍
@@ -2415,7 +2449,7 @@ function c4CleanOldDest(server, slot, job) {
         let boxSel = 'x=' + bx0 + ',y=' + by0 + ',z=' + bz0 + ',dx=' + bw + ',dy=' + bh + ',dz=' + bd
         let r2 = Number(server.runCommandSilent('execute in ' + odc.dim + ' run kill @e[type=immersive_portals:portal,' + boxSel + ',tag=!cw_rev,tag=!cw_id]'))
         if (!isNaN(r2)) doors += r2
-      } catch (e) { console.warn('[C4] 清旧门兜底失败: ' + e) }
+      } catch (e) { c4log('warn', '清旧门兜底失败: ' + e) }
       // ②-c 方块：逐类 replace（只替换这些方块，玩家在旧落点搭的别的东西一格都不动）
       let blocks = [
         'kubejs:warping_frame', 'kubejs:warping_frame_platform', 'kubejs:warping_frame_slab',
@@ -2433,10 +2467,10 @@ function c4CleanOldDest(server, slot, job) {
           try {
             let r = Number(server.runCommandSilent('execute in ' + odc.dim + ' run fill ' + x0 + ' ' + y + ' ' + z0 + ' ' + x1 + ' ' + y2 + ' ' + z1 + ' minecraft:air replace ' + bl))
             if (!isNaN(r)) n += r
-          } catch (e) { console.warn('[C4] 清旧方块失败 ' + bl + ': ' + e) }
+          } catch (e) { c4log('warn', '清旧方块失败 ' + bl + ': ' + e) }
         }
       })
-    } catch (e) { console.warn('[C4] 清理旧落点失败: ' + e) }
+    } catch (e) { c4log('warn', '清理旧落点失败: ' + e) }
     // 释放已由外层 200t 定时器排好（释放放外层，早退/异常都不漏）
   })
 }
@@ -2461,11 +2495,11 @@ BlockEvents.broken(event => {
     server.scheduleInTicks(1, () => {
       try {
         server.runCommandSilent('execute in ' + dim + ' if block ' + bx + ' ' + by + ' ' + bz + ' minecraft:air run setblock ' + bx + ' ' + by + ' ' + bz + ' ' + state)
-        console.info('[C4] 保护方块被破坏已还原：' + id + ' @' + bx + ',' + by + ',' + bz)
+        c4log('info', '保护方块被破坏已还原：' + id + ' @' + bx + ',' + by + ',' + bz)
       } catch (e1) {}
     })
     try { event.player.tell(Text.of('⟢ 这是立方体的机器零件，拆不掉（要用拆除器对着洞口双击来拆 3×3 隧道）')) } catch (e2) {}
-  } catch (e) { console.warn('[C4] 保护方块检查失败: ' + e) }
+  } catch (e) { c4log('warn', '保护方块检查失败: ' + e) }
 })
 
 BlockEvents.rightClicked('kubejs:launch_button', event => {
@@ -2500,7 +2534,7 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
         return
       }
       let nx = Math.floor(c4CubeX(slot)), ny = C4_TELE_FLOOR + 1, nz = Math.floor(C4_Z) + 7
-      console.info('[C4] 旧存档按钮迁移 slot' + slot + '：' + bx + ',' + by + ',' + bz + ' → ' + nx + ',' + ny + ',' + nz)
+      c4log('info', '旧存档按钮迁移 slot' + slot + '：' + bx + ',' + by + ',' + bz + ' → ' + nx + ',' + ny + ',' + nz)
       try {
         clicker.tell(Text.of('⟢ 检测到旧基地按钮（y=' + by + '）：正在下层 y=' + C4_TELE_FLOOR + ' 新建传送器、绑定队伍并清掉旧按钮/操控台…'))
       } catch (e0) {}
@@ -2509,19 +2543,19 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
       try {
         server.runCommandSilent('execute in minecraft:overworld positioned ' + (bx + 0.5) + ' ' + by + ' ' + (bz + 0.5)
           + ' run kill @e[type=immersive_portals:portal,distance=..128]')
-      } catch (eK0) { console.warn('[C4] 旧按钮附近清门失败: ' + eK0) }
+      } catch (eK0) { c4log('warn', '旧按钮附近清门失败: ' + eK0) }
       // 第二步（20t 后）：搬舱 + 清旧家具
       server.scheduleInTicks(20, () => {
-        try { c4Relocate(server, slot, nx, ny, nz) } catch (eM) { console.warn('[C4] 旧存档按钮迁移失败: ' + eM) }
+        try { c4Relocate(server, slot, nx, ny, nz) } catch (eM) { c4log('warn', '旧存档按钮迁移失败: ' + eM) }
         // 老按钮/操控台钉在基地 97 层，不在 relocate 的 oldBtn 上 → 单独 strip 掉（旧存档过渡）
-        try { c4StripCabin(server, slot, true) } catch (eS) { console.warn('[C4] 旧按钮清理失败: ' + eS) }
+        try { c4StripCabin(server, slot, true) } catch (eS) { c4log('warn', '旧按钮清理失败: ' + eS) }
         // 第三步（再 60t）：按 cells 重建外壳 + 重建 3×3 通道（等门/舱都落位）
         server.scheduleInTicks(60, () => {
           try {
             let CWE = global.CWE
             if (CWE && CWE.rebuildCells && ts && ts.cube) CWE.rebuildCells(server, ts.cube)
-          } catch (eR) { console.warn('[C4] 迁移后重建外壳失败: ' + eR) }
-          try { c4SyncHole(server, slot) } catch (eH) { console.warn('[C4] 迁移后同步隧道失败: ' + eH) }
+          } catch (eR) { c4log('warn', '迁移后重建外壳失败: ' + eR) }
+          try { c4SyncHole(server, slot) } catch (eH) { c4log('warn', '迁移后同步隧道失败: ' + eH) }
           try {
             clicker.tell(Text.of('⟢ 迁移完成：隧道已按开关状态校正（拆除器对着洞口双击 = 打开/还原舱底传送门）。请从基地天花板洞口上去，到 y=' + C4_TELE_FLOOR + ' 的新按钮启动。'))
           } catch (e1) {}
@@ -2563,7 +2597,7 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
       clicker.tell(c4t1('cw.button.not_yours', info.cube.name))
       return
     }
-    console.info('[C4] 按钮放行（权限 tag）：' + c4Name(clicker) + ' → slot ' + slot)
+    c4log('info', '按钮放行（权限 tag）：' + c4Name(clicker) + ' → slot ' + slot)
   }
   if (!c4InCube(clicker, slot)) {
     c4BtnLog(false, clicker, slot, '启动者不在舱内')
@@ -2593,7 +2627,7 @@ BlockEvents.rightClicked('kubejs:launch_button', event => {
     let curDim = (info.cube && info.cube.curDestDim) ? String(info.cube.curDestDim) : null
     if (fixedBad) {
       curDim = null
-      console.info('[C4] 固定落点缺失 slot=' + slot + ' @' + fixedEntry0.x + ',' + fixedEntry0.y + ',' + fixedEntry0.z + ' → 本次直接重建（跳过二次确认）')
+      c4log('info', '固定落点缺失 slot=' + slot + ' @' + fixedEntry0.x + ',' + fixedEntry0.y + ',' + fixedEntry0.z + ' → 本次直接重建（跳过二次确认）')
     }
     if (curDim && targetDim === curDim) {
       let now = Date.now()
@@ -2791,9 +2825,9 @@ ServerEvents.commandRegistry(event => {
       c4AttachSubs(root, cmdRoot, IAT, names[i])
       event.register(root)
     }
-    console.info('[C4] 已注册 /cwp 与 /cube')
+    c4log('info', '已注册 /cwp 与 /cube')
   } catch (e) {
-    console.warn('[C4] 注册命令失败: ' + e)
+    c4log('warn', '注册命令失败: ' + e)
   }
 })
 
@@ -2847,7 +2881,7 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
     })))
 
   root.then(cmdRoot.literal('api').executes(ctx => {
-    try { c4SelfTest(ctx.source.server) } catch (e) { console.warn('[C4] api: ' + e) }
+    try { c4SelfTest(ctx.source.server) } catch (e) { c4log('warn', 'api: ' + e) }
     c4Reply(ctx, '通道: apiStatic=' + C4_CAP.apiStatic + ' instSetter=' + C4_CAP.instSetter
       + ' cmdSet=' + C4_CAP.cmdSet + ' chunkLoader=' + C4_CL_OK)
     return 1
@@ -2973,6 +3007,14 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
   }))
 
   let SAT = c4Cls('com.mojang.brigadier.arguments.StringArgumentType')
+
+  // /cube admin log [off|normal|verbose] —— 运行期切换 [C4] 日志级别（不带参数=查看）
+  root.then(cmdRoot.literal('log').requires(src => src.hasPermission(4))
+    .executes(ctx => { c4CmdLog(ctx, undefined); return 1 })
+    .then(cmdRoot.argument('level', SAT.word()).executes(ctx => {
+      c4CmdLog(ctx, String(SAT.getString(ctx, 'level'))); return 1
+    })))
+
   root.then(cmdRoot.literal('name')
     .then(cmdRoot.argument('name', SAT.greedyString()).executes(ctx => {
       c4CmdName(ctx, String(SAT.getString(ctx, 'name'))); return 1
@@ -3021,9 +3063,9 @@ function c4AttachSubs(root, cmdRoot, IAT, rootName) {
         let obj = JSON.parse(txt)
         obj.looseMovementCheck = true
         FilesCls.writeString(f.toPath(), JSON.stringify(obj, null, 2), CharsetCls.UTF_8)
-        console.info('[C4] ipcfg: looseMovementCheck=true 已写入（需重启生效）')
+        c4log('info', 'ipcfg: looseMovementCheck=true 已写入（需重启生效）')
         c4Reply(ctx, 'ipcfg: looseMovementCheck=true 已写入（重启后生效）')
-      } catch (e) { console.warn('[C4] ipcfg 失败: ' + e); c4Reply(ctx, 'ipcfg 失败: ' + e) }
+      } catch (e) { c4log('warn', 'ipcfg 失败: ' + e); c4Reply(ctx, 'ipcfg 失败: ' + e) }
       return 1
     })))
 
@@ -3121,7 +3163,7 @@ function c4SrcPlayer(ctx) {
 }
 
 function c4Reply(ctx, msg) {
-  try { ctx.source.sendSuccess(Text.of('⟢ ' + msg), false) } catch (e) { console.info('[C4] ' + msg) }
+  try { ctx.source.sendSuccess(Text.of('⟢ ' + msg), false) } catch (e) { c4log('info', msg) }
 }
 
 function c4ReplyT(ctx, key, args) {
@@ -3134,7 +3176,7 @@ function c4ReplyT(ctx, key, args) {
     else c = Text.translatable(key, String(a[0]), String(a[1]), String(a[2]))
   } catch (e) { c = Text.of(key) }
   try { ctx.source.sendSuccess(c, false) } catch (e2) {}
-  console.info('[C4] ' + key + (a.length ? ' ' + a.join(' ') : ''))
+  c4log('info', key + (a.length ? ' ' + a.join(' ') : ''))
 }
 
 function c4CmdHome(ctx) {
@@ -3190,7 +3232,7 @@ function c4CmdHoleMe(ctx, toggle) {
   if (!cube) { c4Reply(ctx, '你的队伍《' + c4TeamLabel(t) + '》还没有绑定的传送仓槽位'); return 0 }
   let slot = Number(cube.slot)
   if (!toggle && !c4HoleOpen(slot)) { c4Reply(ctx, '槽位 ' + slot + ' 的隧道已经是关闭状态'); return 0 }
-  console.info('[C4] holeme：' + p.name + '（队伍 ' + c4TeamLabel(t) + '，slot=' + slot + '）' + (toggle ? '切换隧道' : '还原隧道'))
+  c4log('info', 'holeme：' + p.name + '（队伍 ' + c4TeamLabel(t) + '，slot=' + slot + '）' + (toggle ? '切换隧道' : '还原隧道'))
   let r = c4ToggleHole(ctx.source.server, slot, p)
   if (!r) { c4Reply(ctx, '隧道操作失败（slot ' + slot + '），请联系管理员'); return 0 }
   c4Reply(ctx, (toggle ? '已切换' : '已还原') + '槽位 ' + slot + ' 的传送仓隧道（holeOpen=' + (c4HoleOpen(slot) ? '开' : '关') + '）')
@@ -3209,11 +3251,11 @@ function c4Flag2State(id) {
     if (!bl) return null
     let real = String(bl.id || '')
     if (real && real !== String(id)) {
-      console.warn('[C4] flag2 解析 ' + id + ' 实际得到 ' + real + ' → 退回命令放置')
+      c4log('warn', 'flag2 解析 ' + id + ' 实际得到 ' + real + ' → 退回命令放置')
       return null
     }
     return bl.defaultBlockState()
-  } catch (e) { console.warn('[C4] flag2 解析异常 ' + id + ': ' + e); return null }
+  } catch (e) { c4log('warn', 'flag2 解析异常 ' + id + ': ' + e); return null }
 }
 function c4Flag2Place(lv, x, y, z, state) {
   try {
@@ -3237,7 +3279,7 @@ function c4Flag2Fill(lv, x0, y0, z0, x1, y1, z1, id) {
         for (let z = z0; z <= z1; z++) {
           try { lv.server.runCommandSilent('execute in ' + lv.dimension().location() + ' run setblock ' + x + ' ' + y + ' ' + z + ' ' + id); n++ } catch (e) {}
         }
-    console.warn('[C4] flag2 退回命令放置 ' + id + '：' + n + ' 块')
+    c4log('warn', 'flag2 退回命令放置 ' + id + '：' + n + ' 块')
     return n
   }
   let n = 0
@@ -3271,7 +3313,7 @@ function c4PlaceRoomFlag2(lv, b, btn) {
 // 整舱搬迁：先砌封闭外壳 → 清内腔 → 补上下 2 层空气 → 建地板/家具/门 → 清旧锚点
 function c4Relocate(server, slot, bx2, by2, bz2) {
   let info = c4TeamOfSlot(slot)
-  if (!info || !info.cube) { console.warn('[C4] relocate：槽位 ' + slot + ' 没有登记'); return }
+  if (!info || !info.cube) { c4log('warn', 'relocate：槽位 ' + slot + ' 没有登记'); return }
   let cubeId = info.cube.id || ('cube' + slot)
   // ★ 传送舱固定 17³：旧 ext 只属于基地 cells，绝不能带进舱体/门坐标（否则门会整体偏移 16 格）
   let ext = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
@@ -3286,8 +3328,8 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   let cx = bx2 + 0.5, cy = by2 + 7.5, cz = bz2 - 6.5
   let b = c4RoomBox(cx, cy, cz, ext)
   let dim = 'minecraft:overworld'
-  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dim + ' run ' + cmd) } catch (e) { console.warn('[C4] relocate: ' + e) } }
-  console.info('[C4] relocate slot=' + slot + ' 旧btn=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
+  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dim + ' run ' + cmd) } catch (e) { c4log('warn', 'relocate: ' + e) } }
+  c4log('info', 'relocate slot=' + slot + ' 旧btn=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
     + ' 新btn=' + bx2 + ',' + by2 + ',' + bz2 + ' box=' + b.X0 + '..' + b.X1 + '/' + b.Y0 + '..' + b.Y1 + '/' + b.Z0 + '..' + b.Z1)
   // ⓪ 旧舱附近的门：按【位置】全清——不做任何 tag 过滤（用户要求）。
   //    3×3 通道门也会被清掉，迁移流程 60t 后 c4SyncHole 会同步隧道。
@@ -3366,7 +3408,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   c4Save()
   let tp = { x: cx, y: cy, z: cz }
   let made = 0
-  try { made = c4MakeRoomPortals(server, slot, cubeId, ext, tp) } catch (e5) { console.warn('[C4] relocate 建门失败: ' + e5) }
+  try { made = c4MakeRoomPortals(server, slot, cubeId, ext, tp) } catch (e5) { c4log('warn', 'relocate 建门失败: ' + e5) }
   let seed = 0
   try { seed = c4ReadSeed(server, slot) } catch (e6) { seed = 0 }
   let dest = c4DestOf(info.cube, C4_SEED_DIMS[seed] || C4_SEED_DIMS[0])
@@ -3381,12 +3423,12 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
   // 搬家/第一次指门后同样补反向门（否则到了目的地回不来）
   server.scheduleInTicks(20, () => {
     try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) }
-    catch (eR1) { console.warn('[C4] relocate 反向门失败: ' + eR1) }
+    catch (eR1) { c4log('warn', 'relocate 反向门失败: ' + eR1) }
   })
   // 门洞清理会把 down/up 面整层 17×17 清掉（含地板/操控台/按钮）→ 建完门后立刻补回来
   try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e9) {}
   // 外壳那圈 structure_void（防止透视/放置漏到结构体外）
-  try { c4ShellFill(server, dim, b, 'minecraft:air') } catch (eSh2) { console.warn('[C4] relocate 外壳失败: ' + eSh2) }
+  try { c4ShellFill(server, dim, b, 'minecraft:air') } catch (eSh2) { c4log('warn', 'relocate 外壳失败: ' + eSh2) }
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext, 2) } catch (e8) {}
     try { c4PlaceRoomFlag2(c4OwLevel(server) || c4Level(server, dim), b, { x: bx2, y: by2, z: bz2 }) } catch (e10) {}
@@ -3403,7 +3445,7 @@ function c4Relocate(server, slot, bx2, by2, bz2) {
     }
   } catch (eDD) {}
   // 3×3 洞不自动生成：搬家后保留玩家自己激活的那对门（要重建就 /cube admin hole）
-  console.info('[C4] relocate 完成 slot=' + slot + ' 旧=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
+  c4log('info', 'relocate 完成 slot=' + slot + ' 旧=' + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z
     + ' → 新=' + bx2 + ',' + by2 + ',' + bz2 + ' 门=' + made + ' 旧门清=' + killed + ' link恢复=' + hadLink)
 }
 
@@ -3421,7 +3463,7 @@ function c4CmdRelocate(ctx, slot, x, y, z) {
   // 这里不预载：20t 后 c4Relocate 自己会按舱体范围预载（一次就够）
   let g = C4_GEN
   server.scheduleInTicks(20, () => {
-    if (g !== C4_GEN) { console.info('[C4] 旧世代回调丢弃（relocate）'); return }
+    if (g !== C4_GEN) { c4log('info', '旧世代回调丢弃（relocate）'); return }
     c4Relocate(server, slot, bx3, by2, bz3)
   })
   c4Reply(ctx, 'relocate 已排队：slot=' + slot + ' → btn=' + bx3 + ',' + by2 + ',' + bz3 + '（20t 后执行）')
@@ -3439,8 +3481,8 @@ function c4CmdExtReset(ctx, slot) {
   try { c4DoorPreload(server, zero, tp) } catch (e0) {}
   // 完整重建（测试服清内腔无所谓）：地板/墙/操控台/按钮/光源全部补齐，再重建门
   try { c4BuildRoom(server, 'minecraft:overworld', tp.x, tp.y, tp.z, zero, false, 'all', null, slot) }
-  catch (e1) { console.warn('[C4] ext reset 重建舱体失败: ' + e1) }
-  console.info('[C4] ext reset slot=' + slot + ' 旧=' + JSON.stringify(old) + ' → {0,0,0,0,0}')
+  catch (e1) { c4log('warn', 'ext reset 重建舱体失败: ' + e1) }
+  c4log('info', 'ext reset slot=' + slot + ' 旧=' + JSON.stringify(old) + ' → {0,0,0,0,0}')
   c4CmdDoors(ctx, slot)
   // 兜底：20t 后探测地板/操控台/按钮/光源，缺哪个补哪个（不依赖前面的顺序）
   server.scheduleInTicks(20, () => {
@@ -3459,7 +3501,7 @@ function c4CmdExtReset(ctx, slot) {
         + ' if block ~ ~ ~ minecraft:air run setblock ~ ~ ~ kubejs:launch_button[facing=north]')
       server.runCommandSilent(at + (FX2) + ' ' + (b2.Y0 + 8) + ' ' + FZ2
         + ' if block ~ ~ ~ minecraft:air run setblock ~ ~ ~ minecraft:light[level=15]')
-    } catch (eF) { console.warn('[C4] ext reset 兜底失败: ' + eF) }
+    } catch (eF) { c4log('warn', 'ext reset 兜底失败: ' + eF) }
   })
 }
 
@@ -3490,7 +3532,7 @@ function c4CmdTele(ctx, slot, floorY) {
   //   这种情况只清旧按钮那一格，不清整舱；新舱照常在 fy 重建。
   let oldSafe = oldA.y >= 116
   if (!oldSafe) {
-    console.warn('[C4] tele slot=' + slot + ' 旧锚点 y=' + oldA.y + ' < 116（与基地重叠）→ 跳过整舱清空，只清旧按钮 @'
+    c4log('warn', 'tele slot=' + slot + ' 旧锚点 y=' + oldA.y + ' < 116（与基地重叠）→ 跳过整舱清空，只清旧按钮 @'
       + oldBtn.x + ',' + oldBtn.y + ',' + oldBtn.z)
     try {
       server.runCommandSilent('execute in minecraft:overworld if block ' + oldBtn.x + ' ' + oldBtn.y + ' ' + oldBtn.z
@@ -3517,12 +3559,12 @@ function c4CmdTele(ctx, slot, floorY) {
   c4Save()
   // ② 新位置建舱（17³ 模板 + 6 门 + 反向门）
   let a = c4TeleAnchor(slot)
-  try { c4BuildTeleporter(server, slot, a) } catch (e1) { console.warn('[C4] tele 建舱失败: ' + e1) }
+  try { c4BuildTeleporter(server, slot, a) } catch (e1) { c4log('warn', 'tele 建舱失败: ' + e1) }
   // ③ 40t 后重建 3×3 隧道（等门/舱落位）
   server.scheduleInTicks(40, () => {
-    try { c4SyncHole(server, slot) } catch (e2) { console.warn('[C4] tele 隧道失败: ' + e2) }
+    try { c4SyncHole(server, slot) } catch (e2) { c4log('warn', 'tele 隧道失败: ' + e2) }
   })
-  console.info('[C4] tele slot=' + slot + ' 旧=' + oldA.x + ',' + oldA.y + ',' + oldA.z + ' → 新=' + a.x + ',' + a.y + ',' + a.z + '（按钮 ' + bx + ',' + by + ',' + bz + '）')
+  c4log('info', 'tele slot=' + slot + ' 旧=' + oldA.x + ',' + oldA.y + ',' + oldA.z + ' → 新=' + a.x + ',' + a.y + ',' + a.z + '（按钮 ' + bx + ',' + by + ',' + bz + '）')
   c4Reply(ctx, '传送器 slot' + slot + ' → floor=' + (by - 1) + ' 按钮=' + bx + ',' + by + ',' + bz)
 }
 
@@ -3595,9 +3637,9 @@ function c4CmdDoors(ctx, slot) {
       } catch (err) {}
     })
   } catch (e1) {}
-  if (orphans > 0) console.info('[C4] doors：清掉传送器内无 tag 孤儿门 ' + orphans + ' 扇（slot' + slot + '）')
+  if (orphans > 0) c4log('info', 'doors：清掉传送器内无 tag 孤儿门 ' + orphans + ' 扇（slot' + slot + '）')
   let made = 0
-  try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e2) { console.warn('[C4] 造门失败: ' + e2) }
+  try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e2) { c4log('warn', '造门失败: ' + e2) }
 
   let seed = 0
   try { seed = c4ReadSeed(server, slot) } catch (e3) { seed = 0 }
@@ -3612,7 +3654,7 @@ function c4CmdDoors(ctx, slot) {
   c4PreloadNear(server, rDimId, rpx, rpz, 400, 'doors-rev slot' + slot)
   try {
     aimed = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(rDimId), rpx, rpy, rpz, false, rDimId, cubeId, ext0, false, slot)
-  } catch (e4) { console.warn('[C4] 指门失败: ' + e4) }
+  } catch (e4) { c4log('warn', '指门失败: ' + e4) }
   if (c4HoleOpen(slot)) { try { c4KillReverseDowns(server, slot) } catch (eRD3) {} }
   server.scheduleInTicks(20, () => {
     try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
@@ -3620,7 +3662,7 @@ function c4CmdDoors(ctx, slot) {
   // 反向门尺寸是从正向门复制的：正向门重建后必须一起重建，否则反向门还是旧尺寸。
   // 另外要把【历史目的地】上的旧反向门也清掉（几何改过好几轮，那些是 17×17/8.51 的残留）。
   server.scheduleInTicks(30, () => {
-    try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) } catch (e6) { console.warn('[C4] doors 反向门失败: ' + e6) }
+    try { c4MakeReverse(server, slot, rDimId, rpx, rpy, rpz, cubeId) } catch (e6) { c4log('warn', 'doors 反向门失败: ' + e6) }
     try {
       let ds = (h.cube && h.cube.dests) || {}
       for (let dk in ds) {
@@ -3634,7 +3676,7 @@ function c4CmdDoors(ctx, slot) {
       }
     } catch (e8) {}
   })
-  console.info('[C4] /cwp doors ' + slot + ' ext=' + JSON.stringify(ext) + ' 预载=' + chunks + ' chunks 清旧门=' + killed + ' 重建=' + made + ' 指向=' + aimed)
+  c4log('info', '/cwp doors ' + slot + ' ext=' + JSON.stringify(ext) + ' 预载=' + chunks + ' chunks 清旧门=' + killed + ' 重建=' + made + ' 指向=' + aimed)
   c4Reply(ctx, '槽位 ' + slot + ' 门重建：清 ' + killed + ' / 建 ' + made + ' / 指 ' + aimed + '（ext=' + JSON.stringify(ext) + '）')
 }
 
@@ -3757,7 +3799,7 @@ function c4CmdPortals(ctx, slot) {
 function c4SelfTest(server) {
   let step = (name, fn) => {
     try { 0 }
-    catch (e) { console.warn('[C4] 自检 ' + name + ' FAIL: ' + e) }
+    catch (e) { c4log('warn', '自检 ' + name + ' FAIL: ' + e) }
   }
   step('owLevel', () => { let o = c4OwLevel(server); return o ? 'OK' : 'NULL' })
   step('dimKey', () => { let k = c4DimKey('minecraft:overworld'); return k ? String(k) : 'NULL' })
@@ -3791,7 +3833,7 @@ function c4SelfTest(server) {
     step('实例 getDestDim', () => String(pe.getDestDim()))
     step('实例 setIsVisible', () => { pe.setIsVisible(true); pe.reloadAndSyncToClient(); return 'OK' })
   }
-  console.info('[C4] 通道状态: apiStatic=' + C4_CAP.apiStatic + ' instSetter=' + C4_CAP.instSetter
+  c4log('info', '通道状态: apiStatic=' + C4_CAP.apiStatic + ' instSetter=' + C4_CAP.instSetter
     + ' cmdSet=' + C4_CAP.cmdSet + ' chunkLoader=' + C4_CL_OK)
 }
 
@@ -3835,7 +3877,7 @@ function c4RoomBox(cx, cy, cz, ext) {
 // 6 个面 + 12 条棱 + 8 个角，内盒（框梁/地板/面板/门）一格都不会被覆盖。
 // 每条按 y 分段，单条最多 ~30000 格，扩展后的立方体也不会撞 32768 上限。
 function c4ShellFill(server, dimId, b, block) {
-  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { console.warn('[C4] 外壳: ' + e) } }
+  let run = (cmd) => { try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { c4log('warn', '外壳: ' + e) } }
   let box = (x0, y0, z0, x1, y1, z1) => {
     let w = x1 - x0 + 1, d = z1 - z0 + 1
     let step = Math.max(1, Math.floor(30000 / Math.max(1, w * d)))
@@ -3873,16 +3915,16 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
         let iLo = minY + 9, iHi = maxY - 10 - 16 * py
         let i = Math.round(cy - 0.5)
         i = Math.max(iLo, Math.min(iHi, i))
-        console.warn('[C4] 房间越界 dim=' + dimId + ' cy=' + cy + ' Y0=' + b.Y0 + ' Y1=' + b.Y1 +
+        c4log('warn', '房间越界 dim=' + dimId + ' cy=' + cy + ' Y0=' + b.Y0 + ' Y1=' + b.Y1 +
           '（含外壳需 ' + (minY + 1) + '..' + (maxY - 2) + '）→ 核心 y 夹到 ' + (i + 0.5))
         cy = i + 0.5
         b = c4RoomBox(cx, cy, cz, ext)
       }
     }
-  } catch (e) { console.warn('[C4] 房间越界检查失败: ' + e) }
+  } catch (e) { c4log('warn', '房间越界检查失败: ' + e) }
   let FX = Math.floor(cx), FZ = Math.floor(cz)
   let run = (cmd) => {
-    try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { console.warn('[C4] 房间: ' + e) }
+    try { server.runCommandSilent('execute in ' + dimId + ' run ' + cmd) } catch (e) { c4log('warn', '房间: ' + e) }
   }
   // 大尺寸房间整块 fill 会超过 32768 上限（49×17×49=40817）→ 命令静默失败、旧方块留在原地。
   // 按 8 格一层清，单条最大 49×8×49=19208。
@@ -3914,7 +3956,7 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
       usedTmpl = tr > 0
     } catch (eTm) { usedTmpl = false }
     if (usedTmpl) 0
-    else console.warn('[C4] 模板 hexahedron:cw_dest_room17 不可用 → 回退逐条 fill')
+    else c4log('warn', '模板 hexahedron:cw_dest_room17 不可用 → 回退逐条 fill')
   }
   if (!usedTmpl) {
   let floorCmd = 'fill ' + b.X0 + ' ' + b.Y0 + ' ' + b.Z0 + ' ' + b.X1 + ' ' + b.Y0 + ' ' + b.Z1 + ' kubejs:warping_frame_platform'
@@ -3992,7 +4034,7 @@ function c4BuildRoom(server, dimId, cx, cy, cz, ext, fillHole, clearMode, oldExt
   //   目的地 → 不再铺 air 外壳：目的地副本就是纯净 17³（少一圈 19³ 的挖掘，省事也省性能）
   if (!fillHole) {
     try { c4ShellFill(server, dimId, b, 'minecraft:air') }
-    catch (e) { console.warn('[C4] 外壳填充失败: ' + e) }
+    catch (e) { c4log('warn', '外壳填充失败: ' + e) }
   }
   return b
 }
@@ -4164,7 +4206,7 @@ function c4TagDoor(e, slot, cubeId, dir, isRev) {
       })
       for (let i = 0; i < rm.length; i++) { try { e.removeTag(rm[i]) } catch (e8) {} }
     } catch (err2) {}
-  } catch (err) { console.warn('[C4] 门打 tag 失败: ' + err) }
+  } catch (err) { c4log('warn', '门打 tag 失败: ' + err) }
 }
 // 同一 (队伍, 面) 只允许一扇：保留离期望门面最近的（位置相同则保留先枚举到的），其余 kill
 function c4DedupeDoors(server, doors, T, allowDedupe) {
@@ -4310,8 +4352,8 @@ function c4KillCubeDoors(server, slot, cubeId, cx, cy, cz, radius) {
         try { e.discard(); n++; orphans++ } catch (e1) { try { e.kill(); n++; orphans++ } catch (e2) {} }
       } catch (err) {}
     })
-    if (orphans > 0) console.info('[C4] 清掉传送器内孤儿门 ' + orphans + ' 扇（slot' + slot + '，无 tag 兜底）')
-  } catch (eOr) { console.warn('[C4] 孤儿门清理失败: ' + eOr) }
+    if (orphans > 0) c4log('info', '清掉传送器内孤儿门 ' + orphans + ' 扇（slot' + slot + '，无 tag 兜底）')
+  } catch (eOr) { c4log('warn', '孤儿门清理失败: ' + eOr) }
 
   // 反向门（目的地侧）：旧笼子/旧目的地残留的也一起清；随后 c4MakeReverse 会在当前目的地重建
   try {
@@ -4364,13 +4406,13 @@ function c4MakeRoomPortals(server, slot, idName, ext, core) {
     }
     if (!c4PortalNearPoint(server, q[0], q[1], q[2], 2)) {
       failed.push(d)
-      console.warn('[C4] 建门失败 face=' + d + ' 期望 @' + q[0].toFixed(2) + ',' + q[1].toFixed(2) + ',' + q[2].toFixed(2) + ' span=' + span + ' ret=' + ret + ' fallback=summon-unsupported')
+      c4log('warn', '建门失败 face=' + d + ' 期望 @' + q[0].toFixed(2) + ',' + q[1].toFixed(2) + ',' + q[2].toFixed(2) + ' span=' + span + ' ret=' + ret + ' fallback=summon-unsupported')
     }
   })
   let synced = { total: 0, killed: 0, faces: {} }
   // 重建 6 面门后也做一次去重（同面重复的门只留离目标最近那扇）
   try { synced = c4SyncDoorTags(server, 'minecraft:overworld', cx, cy, cz, ext, slot, idName, false, 260, true) }
-  catch (e) { console.warn('[C4] 建门后打 tag 失败: ' + e) }
+  catch (e) { c4log('warn', '建门后打 tag 失败: ' + e) }
   let want = holeOpen ? 5 : 6
   return synced.total
 }
@@ -4387,7 +4429,7 @@ function c4ClearDoorHole(server, b, dir) {
     else return
     server.runCommandSilent('execute in minecraft:overworld run fill ' + r[0] + ' ' + r[1] + ' ' + r[2]
       + ' ' + r[3] + ' ' + r[4] + ' ' + r[5] + ' minecraft:air')
-  } catch (e) { console.warn('[C4] 清门洞失败: ' + e) }
+  } catch (e) { c4log('warn', '清门洞失败: ' + e) }
 }
 // 某点附近有没有 portal（判定单面建门是否成功）
 function c4PortalNearPoint(server, x, y, z, r) {
@@ -4399,7 +4441,7 @@ function c4PortalNearPoint(server, x, y, z, r) {
 // ---------------------------------------------------------------------------- 启动
 ServerEvents.loaded(event => {
   let server = event.server
-  c4Db(); c4LoadState(); c4Ftb()
+  c4Db(); c4LoadState(); c4LoadLogLevel(); c4Ftb()
   c4SaveState()
 
   // 出生点那台 core 补身份 tag —— 只认 (0,105.5,0) 附近这一个！
@@ -4420,9 +4462,9 @@ ServerEvents.loaded(event => {
   if (c4Db().allowPartyCommand !== false) {
     try {
       c4Cls('dev.ftb.mods.ftbteams.api.FTBTeamsAPI').api().setPartyCreationFromAPIOnly(false)
-      console.info('[C4] 已放开 /ftbteams party create（setPartyCreationFromAPIOnly(false)）')
+      c4log('info', '已放开 /ftbteams party create（setPartyCreationFromAPIOnly(false)）')
     } catch (e) {
-      console.warn('[C4] 放开队伍指令失败（不影响 GUI 建队）: ' + e)
+      c4log('warn', '放开队伍指令失败（不影响 GUI 建队）: ' + e)
     }
   }
 
@@ -4431,15 +4473,15 @@ ServerEvents.loaded(event => {
   let n = 0
   let cubes = c4Db().cubes
 
-  try { c4HealCubeNames() } catch (e) { console.warn('[C4] 基地名自愈失败: ' + e) }
+  try { c4HealCubeNames() } catch (e) { c4log('warn', '基地名自愈失败: ' + e) }
   // 等区块/实体加载完再清大厅门
   if (C4_AUTO.purgeLobby) server.scheduleInTicks(40, () => { try { c4PurgeLobbyPortals(server) } catch (e) {} })
-  console.info('[C4] cw_cubes v4 已加载 | 登记 ' + Object.keys(cubes).length + ' 台 | ChunkLoader ' + n
+  c4log('info', 'cw_cubes v4 已加载 | 登记 ' + Object.keys(cubes).length + ' 台 | ChunkLoader ' + n
     + ' | FTB Teams=' + (c4Ftb().ok ? 'OK' : 'no') + ' | worldStarted=' + C4_STATE.worldStarted)
-  console.info('[C4] 前置：数据包的门操作应已被 v4_strip_portal_cmds.py 注释，否则会和 API 抢门。')
+  c4log('info', '前置：数据包的门操作应已被 v4_strip_portal_cmds.py 注释，否则会和 API 抢门。')
 
   // 自检延后 20 tick，逐项隔离（任何一个通道失败都不影响其它）
-  if (C4_AUTO.selfTest) server.scheduleInTicks(20, () => { try { c4SelfTest(server) } catch (e) { console.warn('[C4] 自检外层异常: ' + e) } })
+  if (C4_AUTO.selfTest) server.scheduleInTicks(20, () => { try { c4SelfTest(server) } catch (e) { c4log('warn', '自检外层异常: ' + e) } })
 })
 
 // ---------------------------------------------------------------------------- 扩展器 / 拆除器（实现在 cw_expand.js）
@@ -4454,7 +4496,7 @@ function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
   let box0 = c4RoomBox(cx, cy, cz, ext || { px: 0, nx: 0, pz: 0, nz: 0, py: 0 })
   let synced = { total: 0, killed: 0, faces: {} }
   try { synced = c4SyncDoorTags(server, 'minecraft:overworld', cx, cy, cz, ext, slot, idName, false, 260) }
-  catch (e) { console.warn('[C4] 门校验前 tag 同步失败: ' + e) }
+  catch (e) { c4log('warn', '门校验前 tag 同步失败: ' + e) }
   let have = synced.faces || {}
   // 隧道打开时 -y（舱底 down 面）本来就该缺席：缺面检测 / 补建 / 校验全都跳过它
   let holeOpen = c4HoleOpen(slot)
@@ -4469,7 +4511,7 @@ function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
   if (miss.length === 0 && dup.length === 0) {
     return true
   }
-  console.warn('[C4] 门校验：faces=' + c4FaceSummary(have) + '，缺 ' + (miss.join(',') || '无') + '，多 ' + (dup.join(',') || '无'))
+  c4log('warn', '门校验：faces=' + c4FaceSummary(have) + '，缺 ' + (miss.join(',') || '无') + '，多 ' + (dup.join(',') || '无'))
   // 只补缺失的面：先建新，建成功再打 tag/去重；全程不删旧门
   if (miss.length > 0) {
     let span = C4_PORTAL_SPAN
@@ -4484,7 +4526,7 @@ function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
         server.runCommandSilent(`execute in minecraft:overworld run kill @e[type=marker,tag=${mk}]`)
       } catch (e2) { ret = -2 }
       let ok = c4PortalNearPoint(server, q[0], q[1], q[2], 3)
-      if (!ok) console.warn('[C4] 建门失败 face=' + d + ' 期望 @' + q[0].toFixed(2) + ',' + q[1].toFixed(2) + ',' + q[2].toFixed(2) + ' span=' + span + ' ret=' + ret)
+      if (!ok) c4log('warn', '建门失败 face=' + d + ' 期望 @' + q[0].toFixed(2) + ',' + q[1].toFixed(2) + ',' + q[2].toFixed(2) + ' span=' + span + ' ret=' + ret)
     }
   }
   server.scheduleInTicks(10, () => {
@@ -4497,7 +4539,7 @@ function c4EnsureSix(server, slot, idName, cx, cy, cz, ext, tries) {
         if (Number(s2.faces[d] || 0) !== 1) bad.push(d + ':' + Number(s2.faces[d] || 0))
       }
       if (bad.length === 0) 0
-      else console.warn('[C4] 门校验仍不齐：' + bad.join(' ') + '（旧门保留，期望中心 ' + JSON.stringify({
+      else c4log('warn', '门校验仍不齐：' + bad.join(' ') + '（旧门保留，期望中心 ' + JSON.stringify({
         up: T['y'].p, down: T['-y'].p, n: T['-z'].p, s: T['z'].p, e: T['x'].p, w: T['-x'].p
       }) + '）')
     } catch (e3) {}
@@ -4538,9 +4580,9 @@ function c4MigrateDoorTags(server) {
       if (r.total > 0) {
         tagged++
       }
-    } catch (e) { console.warn('[C4] 门 tag 迁移 slot' + (c && c.slot) + ' 失败: ' + e) }
+    } catch (e) { c4log('warn', '门 tag 迁移 slot' + (c && c.slot) + ' 失败: ' + e) }
   }
-  console.info('[C4] 门 tag 迁移完成：' + tagged + ' 台 / ' + total + ' 扇（幂等，可重复跑）')
+  c4log('info', '门 tag 迁移完成：' + tagged + ' 台 / ' + total + ' 扇（幂等，可重复跑）')
   return total
 }
 // /cube admin face <slot> <face> <dim>：S1 调试 —— 按 tag 点名，只把这一面指到另一维度
@@ -4612,11 +4654,11 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
       + ' ' + (bb.X1 + 2) + ' ' + (bb.Y1 + 2) + ' ' + (bb.Z1 + 2) + ' minecraft:air')
     tmpl = Number(server.runCommandSilent('execute in minecraft:overworld run place template hexahedron:cw_teleporter21 '
       + (bb.X0 - 2) + ' ' + (bb.Y0 - 2) + ' ' + (bb.Z0 - 2)))
-  } catch (eT) { console.warn('[C4] 传送器模板放置失败: ' + eT) }
+  } catch (eT) { c4log('warn', '传送器模板放置失败: ' + eT) }
   if (!(tmpl > 0)) {
-    console.warn('[C4] 模板 hexahedron:cw_teleporter21 不可用（ret=' + tmpl + '）→ 退回程序化建舱')
+    c4log('warn', '模板 hexahedron:cw_teleporter21 不可用（ret=' + tmpl + '）→ 退回程序化建舱')
     try { c4BuildRoom(server, 'minecraft:overworld', cx, cy, cz, ext0, false, 'all') }
-    catch (e) { console.warn('[C4] 传送器舱体失败: ' + e) }
+    catch (e) { c4log('warn', '传送器舱体失败: ' + e) }
   } else {
     // 中心 3×3 洞保持 air（模板里本来就是 air，这里只做保险）
     try {
@@ -4634,7 +4676,7 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
         + (bxP - 2) + ' ' + (basP.y + 1) + ' ' + (bzP - 2)))
       if (trP > 0) 0
     }
-  } catch (eP2) { console.warn('[C4] 补回管道模板失败: ' + eP2) }
+  } catch (eP2) { c4log('warn', '补回管道模板失败: ' + eP2) }
 
   // 排气孔 marker：模板里 7 个 warping_vent 是死方块，数据包靠 tag=vent 的 marker 喷粒子
   try {
@@ -4643,7 +4685,7 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
       server.runCommandSilent('execute in minecraft:overworld run summon marker ' + (bb.X0 + o[0]) + ' ' + (bb.Y0 + o[1]) + ' ' + (bb.Z0 + o[2])
         + ' {Tags:["vent","c4vent' + slot + '"]}')
     })
-  } catch (eV) { console.warn('[C4] 排气 marker 失败: ' + eV) }
+  } catch (eV) { c4log('warn', '排气 marker 失败: ' + eV) }
 
   // 传送器也要套一圈 structure_void 外壳；但【和基地盒重叠/贴身时跳过】——
   // 旧布局（舱在基地下方）顶面贴基地地板时，Y1+1 会把基地地板换成结构空位；
@@ -4653,8 +4695,8 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
     let basTop = bas.y + 16
     let overlap = !(bb.Y1 + 1 < bas.y || bb.Y0 - 1 > basTop)
     if (!overlap) c4ShellFill(server, 'minecraft:overworld', bb, 'minecraft:air')
-    else console.info('[C4] 传送器与基地盒重叠/贴身（舱 Y ' + bb.Y0 + '..' + bb.Y1 + ' vs 基地 ' + bas.y + '..' + basTop + '）→ 跳过外壳')
-  } catch (eSh) { console.warn('[C4] 传送器外壳填充失败: ' + eSh) }
+    else c4log('info', '传送器与基地盒重叠/贴身（舱 Y ' + bb.Y0 + '..' + bb.Y1 + ' vs 基地 ' + bas.y + '..' + basTop + '）→ 跳过外壳')
+  } catch (eSh) { c4log('warn', '传送器外壳填充失败: ' + eSh) }
   // 基地不再持有 6 面门：先清旧位置（基地核心）附近的门，再在传送器核心整组重建
   try {
     let bc0 = c4BaseCore(slot)
@@ -4662,7 +4704,7 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
       + ' run kill @e[type=immersive_portals:portal,distance=..40,tag=!cw_lobby,tag=!cw_link,tag=!cw_face_link,tag=!cw_face_link_base]')
   } catch (eK) {}
   let moved = 0
-  try { moved = c4MakeRoomPortals(server, slot, idName, ext0, { x: cx, y: cy, z: cz }) } catch (e) { console.warn('[C4] 传送器建门失败: ' + e) }
+  try { moved = c4MakeRoomPortals(server, slot, idName, ext0, { x: cx, y: cy, z: cz }) } catch (e) { c4log('warn', '传送器建门失败: ' + e) }
   // 门按原目的地重指（有固定落点指落点，没有指【起始笼子】——注意不是传送器自己的坐标！）
   // 目的地：curDestDim → 旧字段 dest → seed 对应维度 → dests 里任意一条；都没有才回落起始笼子
   let dest = null
@@ -4692,17 +4734,17 @@ function c4BuildTeleporter(server, slot, a, logIt, useTmpl) {
   c4PreloadNear(server, destDimId, dpx, dpz, 400, 'tele-rev slot' + slot)
   try {
     c4Retarget(server, cx, cy, cz, destKey, dpx, dpy, dpz, false, destDimId, idName, ext0, false, slot)
-  } catch (e) { console.warn('[C4] 传送器指门失败: ' + e) }
+  } catch (e) { c4log('warn', '传送器指门失败: ' + e) }
   // 第一次指门必须同时造【反向门】，否则到了目的地回不来（原来这里完全没有）
   server.scheduleInTicks(20, () => {
     try { c4MakeReverse(server, slot, destDimId, dpx, dpy, dpz, idName) }
-    catch (eR) { console.warn('[C4] 传送器反向门失败: ' + eR) }
+    catch (eR) { c4log('warn', '传送器反向门失败: ' + eR) }
   })
   server.scheduleInTicks(10, () => {
     try { c4EnsureSix(server, slot, idName, cx, cy, cz, ext0, 2) } catch (e) {}
   })
   if (logIt !== false) {
-    console.info('[C4] 传送器建成 slot' + slot + ' floor=' + a.y + ' core=' + cy + ' @' + a.x + ',' + a.y + ',' + a.z
+    c4log('info', '传送器建成 slot' + slot + ' floor=' + a.y + ' core=' + cy + ' @' + a.x + ',' + a.y + ',' + a.z
       + ' 搬门=' + moved + ' 按钮=' + (a.x) + ',' + (a.y + 1) + ',' + (a.z + 7))
   }
   return moved
@@ -4720,7 +4762,7 @@ function c4StripCabin(server, slot, logIt) {
     let tb = c4RoomBox(ta.x + 0.5, ta.y + 8.5, ta.z + 0.5, { px: 0, nx: 0, pz: 0, nz: 0, py: 0 })
     let overlap = !(tb.Y1 + 1 < y0 || tb.Y0 - 1 > y1 || tb.X1 + 1 < x0 || tb.X0 - 1 > x1 || tb.Z1 + 1 < z0 || tb.Z0 - 1 > z1)
     if (overlap) {
-      if (logIt !== false) console.info('[C4] cabin strip slot' + slot + '：传送器与基地同址 → 跳过（保留按钮/操控台）')
+      if (logIt !== false) c4log('info', 'cabin strip slot' + slot + '：传送器与基地同址 → 跳过（保留按钮/操控台）')
       return 0
     }
   } catch (eOv) {}
@@ -4738,7 +4780,7 @@ function c4StripCabin(server, slot, logIt) {
       } catch (e) {}
     }
   })
-  if (logIt !== false) console.info('[C4] cabin strip slot' + slot + '：删除 ' + n + ' 格（box ' + x0 + ',' + y0 + ',' + z0 + '..' + x1 + ',' + y1 + ',' + z1 + '）')
+  if (logIt !== false) c4log('info', 'cabin strip slot' + slot + '：删除 ' + n + ' 格（box ' + x0 + ',' + y0 + ',' + z0 + '..' + x1 + ',' + y1 + ',' + z1 + '）')
   return n
 }
 // 整舱平移：新位建房 + 门按 tag 跟随 + 旧位清理 + 锚点写库
@@ -4769,7 +4811,7 @@ function c4SpawnLinkPortal(server, pos, size, rot) {
       + ' run summon marker ~ ~ ~ {Rotation:[0.0f,' + r.toFixed(1) + 'f],NoGravity:1b,Tags:["' + t + '"]}')
     server.runCommandSilent('execute in minecraft:overworld as @e[type=marker,tag=' + t + '] at @s run portal cb_make_portal ' + size + ' ' + size + ' @s @s main_cube')
     server.runCommandSilent('execute in minecraft:overworld run kill @e[type=marker,tag=' + t + ']')
-  } catch (e) { console.warn('[C4] 链接门生成失败: ' + e) }
+  } catch (e) { c4log('warn', '链接门生成失败: ' + e) }
   let best = null, bd = 1e9
   try {
     c4PortalsInDim(server, 'minecraft:overworld', pos.x, pos.y, pos.z, 10).forEach(e => {
@@ -4796,10 +4838,10 @@ function c4BuildVerticalLinks(server, slot, noRetry) {
   let e = c4SpawnLinkPortal(server, P.src, 3)
   if (!e) {
     if (!noRetry) {
-      console.warn('[C4] 竖直链接门创建失败 slot' + slot + '（20t 后重试一次）')
-      server.scheduleInTicks(20, () => { try { c4BuildVerticalLinks(server, slot, true) } catch (e4) { console.warn('[C4] 链接门重试失败: ' + e4) } })
+      c4log('warn', '竖直链接门创建失败 slot' + slot + '（20t 后重试一次）')
+      server.scheduleInTicks(20, () => { try { c4BuildVerticalLinks(server, slot, true) } catch (e4) { c4log('warn', '链接门重试失败: ' + e4) } })
     } else {
-      console.warn('[C4] 竖直链接门创建失败 slot' + slot + '（已重试，放弃）')
+      c4log('warn', '竖直链接门创建失败 slot' + slot + '（已重试，放弃）')
     }
     return 0
   }
@@ -4811,7 +4853,7 @@ function c4BuildVerticalLinks(server, slot, noRetry) {
   try {
     ok = c4ApplyPortal(server, e, 'minecraft:overworld', c4DimKey('minecraft:overworld'),
       c4Vec(P.dst.x, P.dst.y, P.dst.z), P.src.x, P.src.y, P.src.z)
-  } catch (err2) { console.warn('[C4] 链接门指门失败: ' + err2) }
+  } catch (err2) { c4log('warn', '链接门指门失败: ' + err2) }
   return ok ? 1 : 0
 }
 // 3 秒穿越冷却：同一玩家 3s 内再次贴到链接门面 → 抬回门面上方（IP 没有 per-entity 冷却接口）
@@ -4822,7 +4864,7 @@ function c4CmdDestSet(ctx, slot, dim, x, y, z) {
   if (!c4DestValid(ctx.source.server, d)) { c4Reply(ctx, '目的地不合法（维度不存在/超出可建高度）'); return }
   c4DestSet(info.cube, d.dim, d.x, d.y, d.z)
   c4Save()
-  console.info('[C4] dest set slot=' + slot + ' [' + d.dim + '] = ' + d.x + ',' + d.y + ',' + d.z)
+  c4log('info', 'dest set slot=' + slot + ' [' + d.dim + '] = ' + d.x + ',' + d.y + ',' + d.z)
   c4Reply(ctx, 'dest set slot=' + slot + ' [' + d.dim + '] = ' + d.x + ',' + d.y + ',' + d.z)
 }
 function c4CmdDestShow(ctx, slot) {
@@ -4905,13 +4947,13 @@ function c4CmdPortal(ctx, slot, dimArg, px, py, pz) {
       dy = dest.y + 0.5
       c4BuildRoom(server, dim, dx, dy, dz, ext0, true)
       roomOK = true
-    } catch (eB) { console.warn('[C4] portal 命令建房失败: ' + eB) }
+    } catch (eB) { c4log('warn', 'portal 命令建房失败: ' + eB) }
   }
 
   // 3) 指门（6 面一次性）
   let n = 0
   try { n = c4Retarget(server, tp.x, tp.y, tp.z, c4DimKey(dim), dx, dy, dz, false, dim, cubeId, ext0, false, slot) } catch (eF) {
-    console.warn('[C4] portal 命令指门失败: ' + eF)
+    c4log('warn', 'portal 命令指门失败: ' + eF)
   }
   // 4) 反向门 + 落点记录
   try { c4MakeReverse(server, slot, dim, dx, dy, dz, cubeId) } catch (eR2) {}
@@ -4921,7 +4963,7 @@ function c4CmdPortal(ctx, slot, dimArg, px, py, pz) {
     c4Save()
   } catch (eS) {}
 
-  console.info('[C4] portal 命令 slot=' + slot + ' → ' + dim + ' @' + dest.x + ',' + dest.y + ',' + dest.z
+  c4log('info', 'portal 命令 slot=' + slot + ' → ' + dim + ' @' + dest.x + ',' + dest.y + ',' + dest.z
     + ' 指门=' + n + ' 房间=' + (roomOK ? 'OK' : '未确认'))
   c4Reply(ctx, '已把 ' + slot + ' 的 6 扇门指向 ' + dim + ' @' + dest.x + ',' + dest.y + ',' + dest.z
     + '（指门 ' + n + '，房间' + (roomOK ? '已就绪' : '待确认') + '）')
@@ -4975,7 +5017,7 @@ function c4CmdResetDoor(ctx, slotArg) {
     server.runCommandSilent('execute in minecraft:overworld positioned ' + tp.x + ' ' + tp.y + ' ' + tp.z
       + ' run kill @e[type=immersive_portals:portal,distance=..' + R + ']')
     killed = before
-  } catch (eK) { console.warn('[C4] resetdoor kill 失败: ' + eK) }
+  } catch (eK) { c4log('warn', 'resetdoor kill 失败: ' + eK) }
 
   // ② KubeJS 层再兜一次 discard：命令行 kill 对 IP 门常被重新注册，discard 才可靠
   let discarded = 0
@@ -4989,14 +5031,14 @@ function c4CmdResetDoor(ctx, slotArg) {
         try { e.discard(); discarded++ } catch (e1) { try { e.kill(); discarded++ } catch (e2) {} }
       } catch (err) {}
     })
-  } catch (eD) { console.warn('[C4] resetdoor discard 失败: ' + eD) }
+  } catch (eD) { c4log('warn', 'resetdoor discard 失败: ' + eD) }
 
   // ③ 等 5t 让实体真正移除，再重建 6 门并指回原落点
   let g = C4_GEN
   server.scheduleInTicks(5, () => {
     if (g !== C4_GEN) return
     let made = 0
-    try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e1) { console.warn('[C4] resetdoor 建门失败: ' + e1) }
+    try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, tp) } catch (e1) { c4log('warn', 'resetdoor 建门失败: ' + e1) }
     // 指回当前维度落点
     let seed = 0
     try { seed = c4ReadSeed(server, slot) } catch (e2) { seed = 0 }
@@ -5013,11 +5055,38 @@ function c4CmdResetDoor(ctx, slotArg) {
       try { c4EnsureSix(server, slot, cubeId, tp.x, tp.y, tp.z, ext0, 2) } catch (e5) {}
       try { c4MakeReverse(server, slot, rDim, rx, ry, rz, cubeId) } catch (e6) {}
     })
-    console.info('[C4] resetdoor slot=' + slot + ' 清理=' + killed + '/discard=' + discarded
+    c4log('info', 'resetdoor slot=' + slot + ' 清理=' + killed + '/discard=' + discarded
       + ' 重建=' + made + ' 指向=' + aimed + ' → ' + rDim)
     c4Reply(ctx, '已重置 ' + slot + ' 的传送门：清 ' + killed + '（discard ' + discarded + '）'
       + ' / 建 ' + made + ' / 指 ' + aimed + ' → ' + rDim)
   })
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// /cube admin log [off|normal|verbose|0|1|2] —— 运行期切换 [C4] 日志级别
+//   off     只保留 error（读库/写库失败、跃迁异常等真正的问题）
+//   normal  默认：info + error，屏蔽跃迁流程里的过程性 warn
+//   verbose 全开：包括所有 warn（排查跃迁时序时用）
+// 不带参数 = 查看当前级别。存在 world/cubarper-log.json，reload 后仍生效。
+// ════════════════════════════════════════════════════════════════════════════
+function c4CmdLog(ctx, arg) {
+  if (arg === undefined || arg === null || String(arg).trim() === '') {
+    c4Reply(ctx, '[C4] 日志级别 = ' + c4LogLevelName(C4_LOG_LEVEL) + '（' + C4_LOG_LEVEL + '）'
+      + '　off=只留错误 / normal=默认 / verbose=全开')
+    return
+  }
+  let a = String(arg).trim().toLowerCase()
+  let v = null
+  if (a === 'off' || a === '0') v = 0
+  else if (a === 'normal' || a === 'on' || a === '1') v = 1
+  else if (a === 'verbose' || a === 'debug' || a === '2') v = 2
+  else { c4Reply(ctx, '参数只接受 off / normal / verbose（或 0 / 1 / 2）'); return }
+  C4_LOG_LEVEL = v
+  c4SaveLogLevel()
+  c4Reply(ctx, '已切换 [C4] 日志级别 → ' + c4LogLevelName(v) + '（' + v + '）'
+    + (v === 0 ? '；只保留 error' : (v === 2 ? '；全部输出（含跃迁过程 warn）' : '；info + error')))
+  // 这行本身用 console 直接写，确保切换动作总能被看到（即使刚切到 off）
+  try { console.info('[C4] 日志级别已设为 ' + c4LogLevelName(v) + '（' + v + '）') } catch (e) {}
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5055,6 +5124,7 @@ function c4CmdHelp(ctx) {
     lines.push('')
     lines.push('=== OP：诊断/维护 ===')
     lines.push('/cube admin api / test / near      API 能力 / 自检 / 附近门参数')
+    lines.push('/cube admin log [off|normal|verbose] [C4] 日志级别（off=只留错误）')
     lines.push('/cube admin orphans / adopt        孤儿车厢 / 接管')
     lines.push('/cube admin flush                  清跃迁队列')
     lines.push('/cube admin migrateall / borderfix / pruneup   旧存档迁移/修补')
@@ -5105,7 +5175,7 @@ function c4CmdBind(ctx, slot, x, y, z) {
         try { e.discard(); killed++ } catch (e1) {}
       } catch (e2) {}
     })
-  } catch (e3) { console.warn('[C4] bind 清旧门失败: ' + e3) }
+  } catch (e3) { c4log('warn', 'bind 清旧门失败: ' + e3) }
 
   // ② 写锚点
   info.cube.btn = { x: bx, y: by, z: bz }
@@ -5144,7 +5214,7 @@ function c4CmdBind(ctx, slot, x, y, z) {
   let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
   let made = 0
   try { made = c4MakeRoomPortals(server, slot, cubeId, ext0, core) }
-  catch (e4) { console.warn('[C4] bind 建门失败: ' + e4) }
+  catch (e4) { c4log('warn', 'bind 建门失败: ' + e4) }
   let sdd2 = 0
   try { sdd2 = c4ReadSeed(server, slot) } catch (e0) { sdd2 = 0 }
   let dest = c4DestOf(info.cube, C4_SEED_DIMS[sdd2] || C4_SEED_DIMS[0])
@@ -5156,13 +5226,13 @@ function c4CmdBind(ctx, slot, x, y, z) {
       c4Retarget(server, core.x, core.y, core.z, c4DimKey('hexahedron:bedrock_bottom'),
         core.x, core.y, core.z, false, 'hexahedron:bedrock_bottom', cubeId, ext0, false, slot)
     }
-  } catch (e5) { console.warn('[C4] bind 指门失败: ' + e5) }
+  } catch (e5) { c4log('warn', 'bind 指门失败: ' + e5) }
   server.scheduleInTicks(10, () => {
     try {
       let synced = c4SyncDoorTags(server, 'minecraft:overworld', core.x, core.y, core.z, ext0, slot, cubeId, false, 96)
     } catch (e6) {}
   })
-  console.info('[C4] bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
+  c4log('info', 'bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
   c4Reply(ctx, 'bind slot=' + slot + ' btn=' + bx + ',' + by + ',' + bz + ' 门=' + made + ' 旧门清=' + killed + ' 清面=' + clearedFaces + '/6')
 }
 
@@ -5197,7 +5267,7 @@ function c4BuildHoleLadder(server, slot) {
       } catch (e1) {}
     }
     return n
-  } catch (e) { console.warn('[C4] 基地梯子失败: ' + e); return 0 }
+  } catch (e) { c4log('warn', '基地梯子失败: ' + e); return 0 }
 }
 // ────────────────────────────────────────────────────────────────────────────
 // 隧道 = 舱底那扇 17×17 down 面（cw_face_down）的开关
@@ -5293,7 +5363,7 @@ function c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext) {
         try { e.discard() } catch (e1) { try { e.kill() } catch (e2) {} }
       } catch (err) {}
     })
-  } catch (e3) { console.warn('[C4] 清舱底 down 面失败: ' + e3) }
+  } catch (e3) { c4log('warn', '清舱底 down 面失败: ' + e3) }
   return n
 }
 // 清掉"反向 down 门"：隧道打开时，目的地那间房还留着一扇 cw_face_down + cw_rev 的门，
@@ -5319,7 +5389,7 @@ function c4KillReverseDowns(server, slot) {
         } catch (e1) {}
       } catch (err) {}
     })
-  } catch (e2) { console.warn('[C4] 清反向 down 门失败: ' + e2) }
+  } catch (e2) { c4log('warn', '清反向 down 门失败: ' + e2) }
   if (n > 0) 0
   return n
 }
@@ -5353,7 +5423,7 @@ function c4KillPipeLinks(server, slot) {
       } catch (e2) {}
     })
     if (n > 0) 0
-  } catch (e2) { console.warn('[C4] 清 3×3 门失败: ' + e2) }
+  } catch (e2) { c4log('warn', '清 3×3 门失败: ' + e2) }
   return n
 }
 // 打通隧道结构（幂等；只动方块、不建任何门）：两个 3×3 洞口 + 5×5 管道 + 基地内垂直梯子。
@@ -5364,13 +5434,13 @@ function c4CarveShaft(server, slot) {
     let baseCeil = bas.y + 16             // 基地天花板方块层
     let teleFloor = tel.y                 // 传送仓地板方块层
     if (teleFloor <= baseCeil) {
-      console.warn('[C4] 隧道：传送仓不在基地上方（slot' + slot + ' tel.y=' + teleFloor + ' <= 天花板 ' + baseCeil + '）→ 先 /cube admin tele ' + slot + ' 180')
+      c4log('warn', '隧道：传送仓不在基地上方（slot' + slot + ' tel.y=' + teleFloor + ' <= 天花板 ' + baseCeil + '）→ 先 /cube admin tele ' + slot + ' 180')
       return 0
     }
     let tx = tel.x + 0.5, tz = tel.z + 0.5
     let bx = bas.x + 0.5, bz = bas.z + 0.5
     if (Math.abs(tx - bx) > 0.01 || Math.abs(tz - bz) > 0.01) {
-      console.warn('[C4] 隧道：基地与传送仓 x/z 不同心（基地 ' + bx + ',' + bz + ' / 舱 ' + tx + ',' + tz + '）→ 管道按基地中心铺')
+      c4log('warn', '隧道：基地与传送仓 x/z 不同心（基地 ' + bx + ',' + bz + ' / 舱 ' + tx + ',' + tz + '）→ 管道按基地中心铺')
     }
     let hx = Math.floor(bx), hz = Math.floor(bz)
     let tx0 = Math.floor(tx), tz0 = Math.floor(tz)
@@ -5398,11 +5468,11 @@ function c4CarveShaft(server, slot) {
         server.runCommandSilent('execute in minecraft:overworld run fill ' + (hx - 1) + ' ' + pipeBot + ' ' + (hz - 1) + ' '
           + (hx + 1) + ' ' + pipeTop + ' ' + (hz + 1) + ' minecraft:air')
       }
-    } catch (ePipe) { console.warn('[C4] 5×5 管道失败: ' + ePipe) }
+    } catch (ePipe) { c4log('warn', '5×5 管道失败: ' + ePipe) }
     // ④ 基地内的垂直梯子：从基地地板爬到管道顶（不用飞）
-    try { c4BuildHoleLadder(server, slot) } catch (eLd) { console.warn('[C4] 梯子失败: ' + eLd) }
+    try { c4BuildHoleLadder(server, slot) } catch (eLd) { c4log('warn', '梯子失败: ' + eLd) }
     return 1
-  } catch (e) { console.warn('[C4] 隧道结构失败: ' + e); return 0 }
+  } catch (e) { c4log('warn', '隧道结构失败: ' + e); return 0 }
 }
 // 隧道开关（拆除器双击 / /cube admin hole）：开关舱地板那扇 17×17 的 down 面（cw_face_down）
 function c4ToggleHole(server, slot, player) {
@@ -5436,8 +5506,8 @@ function c4ToggleHole(server, slot, player) {
       c4Save()                                       // 先落盘"已还原"：EnsureSix 内部按 holeOpen 决定补不补 -y
       let n3 = c4KillPipeLinks(server, slot)         // 3×3 已废弃：还原时顺手清干净
       let carve = 0
-      try { carve = c4CarveShaft(server, slot) } catch (eS) { console.warn('[C4] 隧道结构失败: ' + eS) }
-      try { c4EnsureSix(server, slot, cubeId, cx, cy, cz, ext0, 2) } catch (e6) { console.warn('[C4] 隧道还原补门失败: ' + e6) }
+      try { carve = c4CarveShaft(server, slot) } catch (eS) { c4log('warn', '隧道结构失败: ' + eS) }
+      try { c4EnsureSix(server, slot, cubeId, cx, cy, cz, ext0, 2) } catch (e6) { c4log('warn', '隧道还原补门失败: ' + e6) }
       let aimed = 0
       if (saved && saved.dim && isFinite(Number(saved.x)) && isFinite(Number(saved.y)) && isFinite(Number(saved.z))) {
         let dimId = String(saved.dim)
@@ -5445,7 +5515,7 @@ function c4ToggleHole(server, slot, player) {
         let aim = (when) => {
           try {
             let dn = c4FaceDoorOwned(server, slot, cubeId, cx, cy, cz, ext0, '-y')
-            if (!dn) { console.warn('[C4] 隧道还原 slot=' + slot + '：还没找到新 down 面（' + when + '）'); return 0 }
+            if (!dn) { c4log('warn', '隧道还原 slot=' + slot + '：还没找到新 down 面（' + when + '）'); return 0 }
             let ok = false
             try { ok = c4ApplyPortal(server, dn, dimId, c4DimKey(dimId), c4Vec(sx, sy, sz), cx, cy, cz) } catch (eA) { ok = false }
             return ok ? 1 : 0
@@ -5455,7 +5525,7 @@ function c4ToggleHole(server, slot, player) {
         server.scheduleInTicks(12, () => { try { aim('12t') } catch (eC) {} })
         try { c4BarTeam(server, slot, fallback ? '隧道: 已还原（底门恢复，目标按当前落点）' : '隧道: 已还原（底门恢复）') } catch (eBar) {}
       } else {
-        console.warn('[C4] 隧道还原 slot=' + slot + '：没有 holeSaved 也没有固定落点（down 面已补回，可 /cwp doors ' + slot + ' 重指）')
+        c4log('warn', '隧道还原 slot=' + slot + '：没有 holeSaved 也没有固定落点（down 面已补回，可 /cwp doors ' + slot + ' 重指）')
         try { c4BarTeam(server, slot, '隧道: 已还原（底门已补回，但没有可指的目标，可 /cwp doors ' + slot + ' 重指）') } catch (eBar2) {}
       }
       delete cube.holeSaved
@@ -5469,7 +5539,7 @@ function c4ToggleHole(server, slot, player) {
     if (door && d) {
       cube.holeSaved = { dim: d.dim, x: d.x, y: d.y, z: d.z }
     } else if (door && !d) {
-      console.warn('[C4] 隧道打开 slot=' + slot + '：down 面读不到 destination（保留旧 holeSaved，可 /cwp doors ' + slot + ' 重指）')
+      c4log('warn', '隧道打开 slot=' + slot + '：down 面读不到 destination（保留旧 holeSaved，可 /cwp doors ' + slot + ' 重指）')
     } else {
     }
     let n3 = c4KillPipeLinks(server, slot)
@@ -5483,11 +5553,11 @@ function c4ToggleHole(server, slot, player) {
       try { if (c4HoleOpen(slot)) c4KillDownFace(server, slot, cubeId, cx, cy, cz, ext0) } catch (eT) {}
     })
     let carve = 0
-    try { carve = c4CarveShaft(server, slot) } catch (eS2) { console.warn('[C4] 隧道结构失败: ' + eS2) }
+    try { carve = c4CarveShaft(server, slot) } catch (eS2) { c4log('warn', '隧道结构失败: ' + eS2) }
     try { c4BarTeam(server, slot, d ? '隧道: 已打开（舱地板 → 基地）' : '隧道: 已打开（舱地板 → 基地），但没读到原目标') } catch (eB3) {}
     if (!carve) { try { c4BarTeam(server, slot, '隧道: 传送仓不在基地上方，管道没铺（先 /cube admin tele ' + slot + ' 180）') } catch (eB6) {} }
     return killed + n3
-  } catch (e) { console.warn('[C4] 隧道开关失败: ' + e); return 0 }
+  } catch (e) { c4log('warn', '隧道开关失败: ' + e); return 0 }
 }
 // 幂等同步（relocate / tele / 旧存档迁移 / rebuild 都走这里）：
 //   ① 永远清掉历史遗留的 3×3 门；② 打通隧道结构；③ holeOpen=true 时确保 down 面不存在。
@@ -5500,7 +5570,7 @@ function c4SyncHole(server, slot) {
     let ext0 = { px: 0, nx: 0, pz: 0, nz: 0, py: 0 }
     let n = c4KillPipeLinks(server, slot)
     let carve = 0
-    try { carve = c4CarveShaft(server, slot) } catch (eS) { console.warn('[C4] 隧道结构失败: ' + eS) }
+    try { carve = c4CarveShaft(server, slot) } catch (eS) { c4log('warn', '隧道结构失败: ' + eS) }
     let isOpen = c4HoleOpen(slot)
     if (isOpen) {
       let tp = c4TeleCore(slot)
@@ -5510,7 +5580,7 @@ function c4SyncHole(server, slot) {
       try { n += c4KillReverseDowns(server, slot) } catch (eRD2) {}
     }
     return n
-  } catch (e) { console.warn('[C4] 隧道同步失败: ' + e); return 0 }
+  } catch (e) { c4log('warn', '隧道同步失败: ' + e); return 0 }
 }
 
 // 一次性清理：老存档 slot2..14 的管道里遗留的 3×3（旧版会留 3 扇 / 位置不对）。
@@ -5533,8 +5603,8 @@ function c4CleanStrayPipeLinks(server) {
         } catch (e) {}
       })
     }
-  } catch (e2) { console.warn('[C4] 旧隧道残留清理失败: ' + e2) }
-  if (n > 0) console.info('[C4] 旧隧道残留清理（slot2..14）：删除 ' + n + ' 扇 3×3（17×17 未动）')
+  } catch (e2) { c4log('warn', '旧隧道残留清理失败: ' + e2) }
+  if (n > 0) c4log('info', '旧隧道残留清理（slot2..14）：删除 ' + n + ' 扇 3×3（17×17 未动）')
   return n
 }
 
@@ -5546,7 +5616,7 @@ PlayerEvents.loggedIn(event => {
     let t = c4Team(p)
     let key = t ? c4TeamKey(t) : null
     let cube = key ? c4CubeOfTeam(key) : null
-    console.info('[C4] 登录：' + c4Name(p) + ' 队伍=' + (key || '-') + ' 立方体=' + (cube ? ('slot' + cube.slot) : '无') + '（不强制传送）')
+    c4log('info', '登录：' + c4Name(p) + ' 队伍=' + (key || '-') + ' 立方体=' + (cube ? ('slot' + cube.slot) : '无') + '（不强制传送）')
   } catch (e) {}
 })
 
@@ -5585,12 +5655,14 @@ let C4_BTN_RESTORED = false
 ServerEvents.tick(event => {
   if (C4_BTN_RESTORED) return
   C4_BTN_RESTORED = true
+  // /reload 不会触发 ServerEvents.loaded → 日志级别必须在这里也加载一次（幂等）
+  c4LoadLogLevel()
   if (C4_AUTO.restoreButtons) try {
     let n = c4RestoreButtons(event.server)
-    console.info('[C4] 启动复位：检查 ' + n + ' 台车厢的按钮状态')
-  } catch (e) { console.warn('[C4] 启动复位异常: ' + e) }
+    c4log('info', '启动复位：检查 ' + n + ' 台车厢的按钮状态')
+  } catch (e) { c4log('warn', '启动复位异常: ' + e) }
   // S5：老 cube.dest → cube.dests[dim]（一次性、幂等）
-  try { c4MigrateDests() } catch (eD) { console.warn('[C4] dest 迁移异常: ' + eD) }
+  try { c4MigrateDests() } catch (eD) { c4log('warn', 'dest 迁移异常: ' + eD) }
 
   // 传送器布局迁移：老存档把按钮绑在【基地层】(y≈98) → 清掉锚点走默认。
   // ⚠ 2026-10 传送仓改到基地上方（180）后，按钮合法 y=181 —— 只清 50<y<180 的老锚点，
@@ -5602,10 +5674,10 @@ ServerEvents.tick(event => {
       let by0 = c0 && c0.btn ? Number(c0.btn.y) : NaN
       if (!isNaN(by0) && by0 > 50 && by0 < C4_TELE_FLOOR) { delete c0.btn; nT++ }
     }
-    if (nT > 0) { c4Save(); console.info('[C4] 传送器布局迁移：清理 ' + nT + ' 个旧地面按钮锚点（y 50..' + (C4_TELE_FLOOR - 1) + '）') }
-  } catch (eTl) { console.warn('[C4] 传送器布局迁移异常: ' + eTl) }
+    if (nT > 0) { c4Save(); c4log('info', '传送器布局迁移：清理 ' + nT + ' 个旧地面按钮锚点（y 50..' + (C4_TELE_FLOOR - 1) + '）') }
+  } catch (eTl) { c4log('warn', '传送器布局迁移异常: ' + eTl) }
   // S1：老存档的门没有 cw_face_*/cw_team_* → 第一个 tick 按 cw_id_* + 几何补一次（幂等，等下次操作也会补）
-  if (C4_AUTO.doorTags) try { c4MigrateDoorTags(event.server) } catch (e) { console.warn('[C4] 门 tag 迁移异常: ' + e) }
+  if (C4_AUTO.doorTags) try { c4MigrateDoorTags(event.server) } catch (e) { c4log('warn', '门 tag 迁移异常: ' + e) }
   // 一次性自检（最多 3 台）：home 落点必须落在【传送仓】而不是基地内腔（DB 里 btn 常为 null，靠 tele 兜底）
   try {
     let dbH = c4Db(), cbH = dbH.cubes || {}, shownH = 0
@@ -5616,15 +5688,15 @@ ServerEvents.tick(event => {
       let slotH = Number(cH.slot)
       let ts = c4HomeSeat(slotH), bs = c4BaseSeat(slotH, 0, 1)
       let ty = (cH.tele && cH.tele.y !== undefined) ? Number(cH.tele.y) : C4_TELE_FLOOR
-      console.info('[C4] home seat 校验 slot' + slotH + ': tele=(' + ts.x + ', ' + ts.y + ', ' + ts.z
+      c4log('info', 'home seat 校验 slot' + slotH + ': tele=(' + ts.x + ', ' + ts.y + ', ' + ts.z
         + ') base=(' + bs.x + ', ' + bs.y + ', ' + bs.z + ') btn=' + (cH.btn ? 'y' + cH.btn.y : 'null') + ' teleFloor=' + ty)
       if (Number(ts.y) < ty + 1) {
-        console.warn('[C4] home seat 退回基地！slot' + slotH + ' seat.y=' + ts.y + ' < tele.y+1=' + (ty + 1)
+        c4log('warn', 'home seat 退回基地！slot' + slotH + ' seat.y=' + ts.y + ' < tele.y+1=' + (ty + 1)
           + '（检查 c4BtnPos 的 tele 兜底与 C4_TELE_FLOOR=' + C4_TELE_FLOOR + '）')
       }
       shownH++
     }
-  } catch (eHm) { console.warn('[C4] home seat 校验异常: ' + eHm) }
+  } catch (eHm) { c4log('warn', 'home seat 校验异常: ' + eHm) }
   // 一次性：清掉 slot2..14 管道里旧版遗留的第 3 扇/错位 3×3（DB 标记，只跑一次；不碰 17×17）
   if (C4_AUTO.cleanStrayLinks) try {
     let dbS = c4Db()
@@ -5632,9 +5704,9 @@ ServerEvents.tick(event => {
       let kn = c4CleanStrayPipeLinks(event.server)
       dbS.pipeLinksClean2026 = true
       c4Save()
-      console.info('[C4] 管道残门清理完成（一次性，slot2..14）：' + kn + ' 扇')
+      c4log('info', '管道残门清理完成（一次性，slot2..14）：' + kn + ' 扇')
     }
-  } catch (eC) { console.warn('[C4] 管道残门清理异常: ' + eC) }
+  } catch (eC) { c4log('warn', '管道残门清理异常: ' + eC) }
 })
 
 // 聊天框只在失败时说话（见 c4WarpBody / perform 的 abort 分支）
@@ -5648,6 +5720,8 @@ ServerEvents.tick(event => {
 global.CWC = {
   // 常量
   TELE_FLOOR: C4_TELE_FLOOR, BASE_FLOOR: C4_BASE_FLOOR, CORE_Y: C4_CORE_Y, CELL: 16,
+  // 日志（cw_expand.js 等外部脚本统一走分级日志，受 /cube admin log 控制）
+  log: (lv, m) => c4log(lv, m),
   // 数据
   db: () => c4Db(), save: () => c4Save(), teamOfSlot: (s) => c4TeamOfSlot(s),
   baseAnchor: (s) => c4BaseAnchor(s), baseCore: (s) => c4BaseCore(s),

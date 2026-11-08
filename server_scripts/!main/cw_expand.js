@@ -18,6 +18,10 @@ function c4Cwc() {
   }
   return c
 }
+// 分级日志出口（走 cw_cubes.js 的 c4log，受 /cube admin log 控制；桥未就绪时静默丢弃）
+function c4elog(lv, m) {
+  try { let c = global.CWC; if (c && c.log) c.log(lv, m) } catch (e) {}
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // 格子化扩建（横向 ±x/±z + 向下 ny，无上限；2026-10 起禁用向上 py）
@@ -80,7 +84,7 @@ function c4EnsureCells(cube) {
   if (n <= 0) return ['0,0,0']
   // ⚠ 新模型不允许向上扩建：旧 ext.py 一律忽略，只展开 gy=0（否则会在舱体位置生成向上格，把按钮/舱体刷掉）
   let set = {}
-  if ((Number(ext.py) | 0) > 0) console.warn('[C4] slot=' + cube.slot + ' 旧 ext.py=' + ext.py + ' 已忽略（不再支持向上扩建）')
+  if ((Number(ext.py) | 0) > 0) c4elog('warn', 'slot=' + cube.slot + ' 旧 ext.py=' + ext.py + ' 已忽略（不再支持向上扩建）')
   for (let gx = -(Number(ext.nx) | 0); gx <= (Number(ext.px) | 0); gx++)
     for (let gz = -(Number(ext.nz) | 0); gz <= (Number(ext.pz) | 0); gz++)
       set[c4CellKey(gx, 0, gz)] = 1
@@ -95,7 +99,7 @@ function c4RebuildCells(server, cube) {
   c4EnsureCells(cube)
   // ★ 封墙之前先判断：外表面（马上要被填成框梁的那一圈）上如果已经有东西（玩家方块/地形），
   //   就自动在那个方向免费扩 1 格，把这些方块包进房间，而不是直接封墙把它们埋掉。
-  try { c4AutoExpandForBorderItems(server, cube) } catch (eB) { console.warn('[C4] 封墙前边框判断失败: ' + eB) }
+  try { c4AutoExpandForBorderItems(server, cube) } catch (eB) { c4elog('warn', '封墙前边框判断失败: ' + eB) }
   let keys = c4Cells(cube), set = c4CellSet(cube)
   let run = (cmd) => { try { server.runCommandSilent('execute in minecraft:overworld run ' + cmd) } catch (e) {} }
   // 旧版隐形壳：minecraft:barrier / minecraft:structure_void / kubejs:hexahedron_filling。
@@ -116,7 +120,7 @@ function c4RebuildCells(server, cube) {
       LEGACY.forEach(t => run('fill ' + (u.X0 - ex) + ' ' + yy + ' ' + (u.Z0 - ex) + ' '
         + (u.X1 + ex) + ' ' + y2 + ' ' + (u.Z1 + ex) + ' minecraft:air replace ' + t))
     }
-  } catch (eBig) { console.warn('[C4] 外壳全清失败: ' + eBig) }
+  } catch (eBig) { c4elog('warn', '外壳全清失败: ' + eBig) }
   // 6 邻接：有邻居 = 连接面（打通）；没邻居 = 外表面（整面封死）
   let DIRS = [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1], ['py', 0, 1, 0], ['ny', 0, -1, 0]]
   let stamped = 0
@@ -385,7 +389,7 @@ function c4AddCell(server, cube, dir, player, force) {
     try {
       server.runCommandSilent('execute in minecraft:overworld run fill ' + (b.X0 + 1) + ' ' + (b.Y0 + 1) + ' ' + (b.Z0 + 1)
         + ' ' + (b.X1 - 1) + ' ' + (b.Y1 - 1) + ' ' + (b.Z1 - 1) + ' minecraft:air')
-    } catch (eDig) { console.warn('[C4] 向下扩建挖空失败: ' + eDig) }
+    } catch (eDig) { c4elog('warn', '向下扩建挖空失败: ' + eDig) }
   }
   // ⑤ 清掉新格里的旧外壳/旧版填充（只动这两种方块；模板本身不含不可见方块）
   c4ClearNewCellFill(server, b)
@@ -493,7 +497,7 @@ function c4MigrateExtToCells(server, cube) {
   if (!adopt) {
     let set = {}
     // 旧模型是"矩形"：gx ∈ [-nx..px]，gz ∈ [-nz..pz]；新模型不允许向上，py 忽略（只 gy=0）
-    if (ext.py > 0) console.warn('[C4] 迁移 slot=' + cube.slot + ' 旧 ext.py=' + ext.py + ' 已忽略（不再支持向上）')
+    if (ext.py > 0) c4elog('warn', '迁移 slot=' + cube.slot + ' 旧 ext.py=' + ext.py + ' 已忽略（不再支持向上）')
     for (let gx = -ext.nx; gx <= ext.px; gx++)
       for (let gz = -ext.nz; gz <= ext.pz; gz++)
         set[gx + ',0,' + gz] = 1
@@ -512,7 +516,7 @@ function c4MigrateExtToCells(server, cube) {
       let live = c4CubeBySlot(slot0) || cube
       // 旧存档升级：边框平面有玩家方块 → 免费扩 1 格，把这些方块包进新房间（不被新墙埋掉）
       let grown = 0
-      try { grown = c4AutoExpandForBorderItems(server, live) } catch (eGr) { console.warn('[C4] 边框扩格失败: ' + eGr) }
+      try { grown = c4AutoExpandForBorderItems(server, live) } catch (eGr) { c4elog('warn', '边框扩格失败: ' + eGr) }
       // 先清旧格子扩建留在内部的成片结构空位，再重建外边界（凹形壳会被重建刷回）
       let cleared = c4ClearInnerVoid(server, live)
       let built = c4RebuildCells(server, live)
@@ -520,9 +524,9 @@ function c4MigrateExtToCells(server, cube) {
       C2.save()
       // 迁移也包含上下通道：重新建 5×5 管道 + 两扇互指 3×3（幂等，不碰 17×17）
       let hole = 0
-      try { hole = C2.syncHole(server, slot0) } catch (eH) { console.warn('[C4] 迁移补通道失败 slot=' + slot0 + ': ' + eH) }
-      console.info('[C4] 旧存档迁移补建完成 slot=' + slot0 + '（' + built + ' 格，清内部空位 ' + cleared + ' 格，边框扩格 ' + grown + '，通道门=' + hole + '，外边界已重算）')
-    } catch (eM) { console.warn('[C4] 迁移重建失败 slot=' + slot0 + ': ' + eM) }
+      try { hole = C2.syncHole(server, slot0) } catch (eH) { c4elog('warn', '迁移补通道失败 slot=' + slot0 + ': ' + eH) }
+      c4elog('info', '旧存档迁移补建完成 slot=' + slot0 + '（' + built + ' 格，清内部空位 ' + cleared + ' 格，边框扩格 ' + grown + '，通道门=' + hole + '，外边界已重算）')
+    } catch (eM) { c4elog('warn', '迁移重建失败 slot=' + slot0 + ': ' + eM) }
   })
   return n
 }
@@ -534,10 +538,10 @@ function c4MigrateAllCubes(server) {
   let db = C.db(), cubes = (db && db.cubes) || {}, n = 0
   for (let k in cubes) {
     try { if (c4MigrateExtToCells(server, cubes[k])) n++ } catch (e1) {
-      console.warn('[C4] 迁移异常 slot=' + (cubes[k] && cubes[k].slot) + ': ' + e1)
+      c4elog('warn', '迁移异常 slot=' + (cubes[k] && cubes[k].slot) + ': ' + e1)
     }
   }
-  if (n > 0) console.info('[C4] 扩建迁移完成：' + n + ' 台（ext → cells）')
+  if (n > 0) c4elog('info', '扩建迁移完成：' + n + ' 台（ext → cells）')
   return n
 }
 ServerEvents.tick(event => {
@@ -658,8 +662,8 @@ function c4CmdPruneUp(ctx) {
   cube.cells = keep
   C.save()
   let n = 0
-  try { n = c4RebuildCells(server, cube) } catch (e) { console.warn('[C4] pruneup 重建失败: ' + e) }
-  console.info('[C4] pruneup slot=' + slot + '：移除向上格 ' + removed + '，剩余 ' + n + ' 格')
+  try { n = c4RebuildCells(server, cube) } catch (e) { c4elog('warn', 'pruneup 重建失败: ' + e) }
+  c4elog('info', 'pruneup slot=' + slot + '：移除向上格 ' + removed + '，剩余 ' + n + ' 格')
   C.reply(ctx, 'pruneup slot' + slot + '：移除向上格 ' + removed + '，剩余 ' + n + ' 格')
   return 1
 }
@@ -681,8 +685,8 @@ function c4CmdBorderFix(ctx) {
     try {
       let added = c4AutoExpandForBorderItems(server, cube)
       let n = c4RebuildCells(server, cube)
-      console.info('[C4] 边框升级 slot=' + slot + '：新增 ' + added + ' 格（共 ' + n + ' 格）')
-    } catch (e) { console.warn('[C4] 边框升级失败 slot=' + slot + ': ' + e) }
+      c4elog('info', '边框升级 slot=' + slot + '：新增 ' + added + ' 格（共 ' + n + ' 格）')
+    } catch (e) { c4elog('warn', '边框升级失败 slot=' + slot + ': ' + e) }
   })
   return 1
 }
@@ -702,7 +706,7 @@ function c4CmdRebuild(ctx) {
   }
   let n = c4RebuildCells(ctx.source.server, info.cube)
   let hole = 0
-  try { if (C.syncHole) hole = C.syncHole(ctx.source.server, slot) } catch (eH) { console.warn('[C4] rebuild 补通道失败: ' + eH) }
+  try { if (C.syncHole) hole = C.syncHole(ctx.source.server, slot) } catch (eH) { c4elog('warn', 'rebuild 补通道失败: ' + eH) }
   C.reply(ctx, '格子重建 slot' + slot + '：' + n + ' 格（外边界已重算，通道门=' + hole + '）')
   return 1
 }
@@ -787,7 +791,7 @@ function c4ToolUse(event, reduce) {
     C4_EXP_CLICK[k] = null
     if (reduce) c4DoReduce(server, cube, face, p)
     else c4DoExpand(server, cube, face, p)
-  } catch (e) { console.warn('[C4] 工具右键: ' + e) }
+  } catch (e) { c4elog('warn', '工具右键: ' + e) }
 }
 
 ItemEvents.rightClicked('kubejs:cube_expander', event => c4ToolUse(event, false))
